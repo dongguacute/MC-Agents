@@ -186,9 +186,6 @@ public class Agent {
 
         ContextStatus contextStatus = getConversationState(player).commitTurn(prompt, reply, requestVersion, maxContextTokens);
         int remainingTokens = contextStatus.remainingTokens();
-        if (maxContextTokens > 0 && result.totalTokens() != null) {
-            remainingTokens = Math.max(0, maxContextTokens - result.totalTokens());
-        }
 
         if (maxContextTokens <= 0) {
             sendToMainThread(
@@ -202,15 +199,22 @@ public class Agent {
             return;
         }
 
+        int usedTokens = Math.max(0, maxContextTokens - remainingTokens);
+        String progressBar = buildProgressBar(usedTokens, maxContextTokens, 24);
+        String usedPercent = formatPercent(usedTokens, maxContextTokens);
+
         if (remainingTokens <= 0 || contextStatus.full()) {
             sendToMainThread(
                     player,
                     i18n(
                             "command.modid.agent.chat.context.remaining.full",
-                            "[%s] 上下文剩余: %s tokens（总上下文 %s tokens，已满，请使用 /agent new 新建对话）",
+                            "[%s] 上下文进度 %s 已用 %s%%（%s/%s tokens）；剩余 %s tokens（已满，请使用 /agent new 新建对话）",
                             AGENT_DISPLAY_NAME,
-                            remainingTokens,
-                            maxContextTokens
+                            progressBar,
+                            usedPercent,
+                            usedTokens,
+                            maxContextTokens,
+                            remainingTokens
                     ).withStyle(ChatFormatting.GOLD)
             );
             return;
@@ -219,10 +223,13 @@ public class Agent {
                 player,
                 i18n(
                         "command.modid.agent.chat.context.remaining",
-                        "[%s] 上下文剩余: %s tokens（总上下文 %s tokens）",
+                        "[%s] 上下文进度 %s 已用 %s%%（%s/%s tokens）；剩余 %s tokens",
                         AGENT_DISPLAY_NAME,
-                        remainingTokens,
-                        maxContextTokens
+                        progressBar,
+                        usedPercent,
+                        usedTokens,
+                        maxContextTokens,
+                        remainingTokens
                 ).withStyle(ChatFormatting.DARK_GRAY)
         );
     }
@@ -477,6 +484,29 @@ public class Agent {
             }
         }
         return Math.max(1, (int) Math.ceil(tokenUnits));
+    }
+
+    private static String buildProgressBar(int usedTokens, int totalTokens, int width) {
+        if (totalTokens <= 0 || width <= 0) {
+            return "[unknown]";
+        }
+        double ratio = Math.max(0.0D, Math.min(1.0D, (double) usedTokens / (double) totalTokens));
+        int filled = (int) Math.round(ratio * width);
+        StringBuilder sb = new StringBuilder(width + 2);
+        sb.append('[');
+        for (int i = 0; i < width; i++) {
+            sb.append(i < filled ? '#' : '-');
+        }
+        sb.append(']');
+        return sb.toString();
+    }
+
+    private static String formatPercent(int usedTokens, int totalTokens) {
+        if (totalTokens <= 0) {
+            return "0.00";
+        }
+        double percent = ((double) usedTokens * 100.0D) / (double) totalTokens;
+        return String.format(Locale.ROOT, "%.2f", percent);
     }
 
     private static String sanitizeReplyForDisplay(String reply) {
