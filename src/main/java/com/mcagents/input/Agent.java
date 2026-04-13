@@ -24,10 +24,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Locale;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -49,6 +54,10 @@ public class Agent {
             """;
     private static final String DEFAULT_API_URL = "https://api.openai.com/v1/chat/completions";
     private static final String DEFAULT_MODEL = "gpt-4o-mini";
+    private static final String OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
+    private static final int DEFAULT_MAX_CONTEXT_TOKENS = 0;
+    private static final int MIN_CONTEXT_TOKENS = 512;
+    private static final int MESSAGE_OVERHEAD_TOKENS = 4;
     private static final Pattern CONTROL_DIRECTIVE_LINE_PATTERN = Pattern.compile("(?im)^\\s*\\[CONTROL_BOT\\].*$");
     private static final Pattern CONTROL_DIRECTIVE_PRESENT_PATTERN = Pattern.compile("(?is)\\[CONTROL_BOT\\]\\s*(join|leave)\\s+");
     private static final Pattern PROMPT_LEAK_PATTERN = Pattern.compile(
@@ -73,7 +82,8 @@ public class Agent {
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
-    private static volatile AgentConfig config = new AgentConfig(DEFAULT_API_URL, "", DEFAULT_MODEL);
+    private static volatile AgentConfig config = new AgentConfig(DEFAULT_API_URL, "", DEFAULT_MODEL, DEFAULT_MAX_CONTEXT_TOKENS);
+    private static final Map<UUID, ConversationState> CONVERSATIONS = new ConcurrentHashMap<>();
 
     public static void initializeConfig(MinecraftServer server) {
         try {
@@ -96,9 +106,24 @@ public class Agent {
 
         String apiUrl = readValue(values, "api_url", DEFAULT_API_URL);
         String apiKey = readValue(values, "api_key", "");
-        String model = readValue(values, "model", DEFAULT_MODEL);
+        String configuredModel = readValue(values, "model", DEFAULT_MODEL);
+        String model = normalizeToLatestDeepSeekModel(configuredModel);
+        String openrouterApiKey = readValue(values, "openrouter_api_key", "");
+        Integer configuredMaxContextTokens = readOptionalIntValue(values, "max_context_tokens", MIN_CONTEXT_TOKENS);
+        if (configuredMaxContextTokens != null) {
+            MCAgentsMod.LOGGER.warn("Ignoring max_context_tokens from config; context window is auto-detected from API only.");
+        }
+        if (!model.equals(configuredModel)) {
+            MCAgentsMod.LOGGER.info("Normalized DeepSeek model from '{}' to latest alias '{}'", configuredModel, model);
+        }
+        int maxContextTokens = resolveModelContextTokens(apiKey, openrouterApiKey, model);
 
-        config = new AgentConfig(apiUrl, apiKey, model);
+        config = new AgentConfig(apiUrl, apiKey, model, maxContextTokens);
+        if (maxContextTokens > 0) {
+            MCAgentsMod.LOGGER.info("Using auto-detected max_context_tokens={} for model={}", maxContextTokens, model);
+        } else {
+            MCAgentsMod.LOGGER.warn("OpenRouter has no context_length for model {}, using 'unkown' context display", model);
+        }
         MCAgentsMod.LOGGER.info("Loaded config from {}", configFile.toAbsolutePath());
     }
 
@@ -113,13 +138,17 @@ public class Agent {
             player.sendSystemMessage(i18n("command.modid.agent.chat.api_key.missing", "未配置 API Key，请编辑 %s 中的 api_key", CONFIG_FILE_NAME).withStyle(ChatFormatting.RED));
             return;
         }
-
         String safePrompt = prompt.trim();
+        ConversationPrepareResult prepareResult = prepareConversation(player, safePrompt, currentConfig.maxContextTokens());
+        if (!prepareResult.allowed()) {
+            sendToMainThread(player, prepareResult.blockMessage().withStyle(ChatFormatting.YELLOW));
+            return;
+        }
         player.sendSystemMessage(i18n("command.modid.agent.chat.requesting", "[%s] 思考中...", AGENT_DISPLAY_NAME).withStyle(ChatFormatting.DARK_GRAY));
 
         CompletableFuture
-                .supplyAsync(() -> callOpenAICompatibleApi(player, safePrompt, currentConfig), HTTP_EXECUTOR)
-                .thenAccept(reply -> handleAiReply(player, reply))
+                .supplyAsync(() -> callOpenAICompatibleApi(player, prepareResult.requestMessages(), currentConfig), HTTP_EXECUTOR)
+                .thenAccept(result -> handleAiReply(player, safePrompt, result, prepareResult.version(), currentConfig.maxContextTokens()))
                 .exceptionally(ex -> {
                     Throwable root = unwrap(ex);
                     if (root instanceof AgentUserException agentError) {
@@ -131,7 +160,12 @@ public class Agent {
                 });
     }
 
-    private static void handleAiReply(ServerPlayer player, String reply) {
+    public static void resetConversation(ServerPlayer player) {
+        getConversationState(player).reset();
+    }
+
+    private static void handleAiReply(ServerPlayer player, String prompt, ApiResult result, long requestVersion, int maxContextTokens) {
+        String reply = result.reply();
         boolean hasDirective = hasControlDirective(reply);
         MinecraftServer server = player.getServer();
         if (server != null) {
@@ -149,22 +183,64 @@ public class Agent {
                 player,
                 i18n("command.modid.agent.chat.reply", "┌─ %s\n└─ %s", AGENT_DISPLAY_NAME, displayReply).withStyle(ChatFormatting.AQUA)
         );
+
+        ContextStatus contextStatus = getConversationState(player).commitTurn(prompt, reply, requestVersion, maxContextTokens);
+        int remainingTokens = contextStatus.remainingTokens();
+        if (maxContextTokens > 0 && result.totalTokens() != null) {
+            remainingTokens = Math.max(0, maxContextTokens - result.totalTokens());
+        }
+
+        if (maxContextTokens <= 0) {
+            sendToMainThread(
+                    player,
+                    i18n(
+                            "command.modid.agent.chat.context.remaining.unknown",
+                            "[%s] 上下文剩余: unkown",
+                            AGENT_DISPLAY_NAME
+                    ).withStyle(ChatFormatting.DARK_GRAY)
+            );
+            return;
+        }
+
+        if (remainingTokens <= 0 || contextStatus.full()) {
+            sendToMainThread(
+                    player,
+                    i18n(
+                            "command.modid.agent.chat.context.remaining.full",
+                            "[%s] 上下文剩余: %s tokens（总上下文 %s tokens，已满，请使用 /agent new 新建对话）",
+                            AGENT_DISPLAY_NAME,
+                            remainingTokens,
+                            maxContextTokens
+                    ).withStyle(ChatFormatting.GOLD)
+            );
+            return;
+        }
+        sendToMainThread(
+                player,
+                i18n(
+                        "command.modid.agent.chat.context.remaining",
+                        "[%s] 上下文剩余: %s tokens（总上下文 %s tokens）",
+                        AGENT_DISPLAY_NAME,
+                        remainingTokens,
+                        maxContextTokens
+                ).withStyle(ChatFormatting.DARK_GRAY)
+        );
     }
 
-    private static String callOpenAICompatibleApi(ServerPlayer player, String prompt, AgentConfig currentConfig) {
+    private static ApiResult callOpenAICompatibleApi(ServerPlayer player, JsonArray requestMessages, AgentConfig currentConfig) {
         try {
-            return callOpenAICompatibleApiStreaming(player, prompt, currentConfig);
+            return callOpenAICompatibleApiStreaming(player, requestMessages, currentConfig);
         } catch (AgentUserException streamError) {
             if (!streamError.isHttpStatusCode(400)) {
                 throw streamError;
             }
-            return callOpenAICompatibleApiFallback(prompt, currentConfig);
+            return callOpenAICompatibleApiFallback(requestMessages, currentConfig);
         }
     }
 
-    private static String callOpenAICompatibleApiStreaming(ServerPlayer player, String prompt, AgentConfig currentConfig) {
+    private static ApiResult callOpenAICompatibleApiStreaming(ServerPlayer player, JsonArray requestMessages, AgentConfig currentConfig) {
         try {
-            JsonObject requestBody = buildRequestBody(prompt, currentConfig.model(), true);
+            JsonObject requestBody = buildRequestBody(requestMessages, currentConfig.model(), true);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(currentConfig.apiUrl()))
@@ -213,7 +289,7 @@ public class Agent {
             if (finalAnswer.isEmpty()) {
                 throw new AgentUserException("command.modid.agent.chat.request.failed.empty");
             }
-            return finalAnswer;
+            return new ApiResult(finalAnswer, streamState.totalTokens);
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -222,9 +298,9 @@ public class Agent {
         }
     }
 
-    private static String callOpenAICompatibleApiFallback(String prompt, AgentConfig currentConfig) {
+    private static ApiResult callOpenAICompatibleApiFallback(JsonArray requestMessages, AgentConfig currentConfig) {
         try {
-            JsonObject requestBody = buildRequestBody(prompt, currentConfig.model(), false);
+            JsonObject requestBody = buildRequestBody(requestMessages, currentConfig.model(), false);
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(currentConfig.apiUrl()))
                     .timeout(Duration.ofSeconds(60))
@@ -254,7 +330,8 @@ public class Agent {
             if (content.isEmpty()) {
                 throw new AgentUserException("command.modid.agent.chat.request.failed.empty");
             }
-            return content;
+            Integer totalTokens = readUsageTotalTokens(result);
+            return new ApiResult(content, totalTokens);
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -263,22 +340,20 @@ public class Agent {
         }
     }
 
-    private static JsonObject buildRequestBody(String prompt, String model, boolean stream) {
+    private static JsonObject buildRequestBody(JsonArray messages, String model, boolean stream) {
         JsonObject requestBody = new JsonObject();
         requestBody.addProperty("model", model);
         requestBody.addProperty("stream", stream);
-
-        JsonArray messages = new JsonArray();
-        JsonObject systemMessage = new JsonObject();
-        systemMessage.addProperty("role", "system");
-        systemMessage.addProperty("content", CONTROL_BOT_SYSTEM_PROMPT);
-        messages.add(systemMessage);
-        JsonObject userMessage = new JsonObject();
-        userMessage.addProperty("role", "user");
-        userMessage.addProperty("content", prompt);
-        messages.add(userMessage);
         requestBody.add("messages", messages);
         return requestBody;
+    }
+
+    private static ConversationPrepareResult prepareConversation(ServerPlayer player, String prompt, int maxContextTokens) {
+        return getConversationState(player).prepareRequest(prompt, maxContextTokens);
+    }
+
+    private static ConversationState getConversationState(ServerPlayer player) {
+        return CONVERSATIONS.computeIfAbsent(player.getUUID(), key -> new ConversationState());
     }
 
     private static boolean consumeEventData(StringBuilder eventData, StreamState streamState) {
@@ -297,6 +372,10 @@ public class Agent {
 
         try {
             JsonObject chunk = JsonParser.parseString(payload).getAsJsonObject();
+            Integer totalTokens = readUsageTotalTokens(chunk);
+            if (totalTokens != null) {
+                streamState.totalTokens = totalTokens;
+            }
             JsonArray choices = chunk.getAsJsonArray("choices");
             if (choices == null || choices.isEmpty()) {
                 return false;
@@ -367,6 +446,37 @@ public class Agent {
             }
         }
         return "";
+    }
+
+    private static Integer readUsageTotalTokens(JsonObject object) {
+        if (object == null || !object.has("usage") || !object.get("usage").isJsonObject()) {
+            return null;
+        }
+        JsonObject usage = object.getAsJsonObject("usage");
+        if (!usage.has("total_tokens")) {
+            return null;
+        }
+        try {
+            return usage.get("total_tokens").getAsInt();
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static int estimateTokens(String content) {
+        if (content == null || content.isEmpty()) {
+            return 0;
+        }
+        double tokenUnits = 0.0D;
+        for (int i = 0; i < content.length(); i++) {
+            char ch = content.charAt(i);
+            if (ch <= 0x7F) {
+                tokenUnits += 0.25D;
+            } else {
+                tokenUnits += 1.0D;
+            }
+        }
+        return Math.max(1, (int) Math.ceil(tokenUnits));
     }
 
     private static String sanitizeReplyForDisplay(String reply) {
@@ -447,6 +557,235 @@ public class Agent {
         return value;
     }
 
+    private static Integer readOptionalIntValue(Map<String, String> values, String key, int minValue) {
+        String raw = values.get(key);
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            int parsed = Integer.parseInt(raw.trim());
+            return Math.max(minValue, parsed);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static int resolveModelContextTokens(String apiKey, String openrouterApiKey, String model) throws IOException {
+        String effectiveOpenRouterKey = (openrouterApiKey != null && !openrouterApiKey.isBlank()) ? openrouterApiKey : apiKey;
+        if (effectiveOpenRouterKey == null || effectiveOpenRouterKey.isBlank()) {
+            throw new IOException("未配置 openrouter_api_key（且 api_key 为空），无法通过 OpenRouter 检索模型总上下文");
+        }
+        try {
+            Integer contextTokens = fetchContextTokensFromOpenRouterModels(effectiveOpenRouterKey, model);
+            if (contextTokens != null) {
+                return contextTokens;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("OpenRouter 模型检索被中断", e);
+        } catch (Exception e) {
+            throw new IOException("OpenRouter 模型检索失败: " + e.getMessage(), e);
+        }
+        return 0;
+    }
+
+    private static Integer fetchContextTokensFromOpenRouterModels(String openRouterApiKey, String model) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(OPENROUTER_MODELS_URL))
+                .timeout(Duration.ofSeconds(10))
+                .header("Authorization", "Bearer " + openRouterApiKey)
+                .header("Content-Type", "application/json; charset=utf-8")
+                .GET()
+                .build();
+        HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            String body = response.body() == null ? "" : response.body();
+            String brief = body.length() > 200 ? body.substring(0, 200) : body;
+            throw new IOException("OpenRouter /models 请求失败，HTTP " + response.statusCode() + ": " + brief);
+        }
+
+        JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
+        JsonArray data = root.has("data") && root.get("data").isJsonArray() ? root.getAsJsonArray("data") : null;
+        if (data == null) {
+            return null;
+        }
+
+        String target = model == null ? "" : model.trim();
+        String targetLower = target.toLowerCase(Locale.ROOT);
+        JsonObject best = null;
+        int bestScore = -1;
+        for (JsonElement element : data) {
+            if (!element.isJsonObject()) {
+                continue;
+            }
+            JsonObject modelObj = element.getAsJsonObject();
+            String id = modelObj.has("id") ? modelObj.get("id").getAsString() : "";
+            String canonical = modelObj.has("canonical_slug") ? modelObj.get("canonical_slug").getAsString() : "";
+            String name = modelObj.has("name") ? modelObj.get("name").getAsString() : "";
+            int score = scoreModelCandidate(targetLower, id, canonical, name);
+            if (score > bestScore) {
+                best = modelObj;
+                bestScore = score;
+            }
+        }
+        if (best == null || bestScore < 40) {
+            return null;
+        }
+        return extractContextTokensFromModelObject(best);
+    }
+
+    private static Integer extractContextTokensFromModelObject(JsonObject modelObj) {
+        String[] candidateKeys = new String[]{
+                "context_length",
+                "context_window",
+                "max_context_length",
+                "max_context_tokens",
+                "max_input_tokens",
+                "max_prompt_tokens",
+                "max_model_len",
+                "input_token_limit",
+                "context_len"
+        };
+        return findTokenLimitRecursively(modelObj, candidateKeys, 0);
+    }
+
+    private static int scoreModelCandidate(String target, String id, String canonical, String name) {
+        String idLower = id == null ? "" : id.toLowerCase(Locale.ROOT);
+        String canonicalLower = canonical == null ? "" : canonical.toLowerCase(Locale.ROOT);
+        String nameLower = name == null ? "" : name.toLowerCase(Locale.ROOT);
+        if (matchesDeepSeekAlias(target, idLower, canonicalLower, nameLower)) {
+            return 98;
+        }
+        if (idLower.equals(target) || canonicalLower.equals(target) || nameLower.equals(target)) {
+            return 100;
+        }
+        if (idLower.endsWith("/" + target) || canonicalLower.endsWith("/" + target)) {
+            return 95;
+        }
+        String normalizedTarget = normalizeModelKey(target);
+        String normalizedId = normalizeModelKey(idLower);
+        String normalizedCanonical = normalizeModelKey(canonicalLower);
+        String normalizedName = normalizeModelKey(nameLower);
+        if (normalizedId.equals(normalizedTarget) || normalizedCanonical.equals(normalizedTarget) || normalizedName.equals(normalizedTarget)) {
+            return 90;
+        }
+        if (idLower.contains(target) || canonicalLower.contains(target) || nameLower.contains(target)) {
+            return 70;
+        }
+        if (normalizedId.contains(normalizedTarget) || normalizedCanonical.contains(normalizedTarget) || normalizedName.contains(normalizedTarget)) {
+            return 60;
+        }
+        return 0;
+    }
+
+    private static boolean matchesDeepSeekAlias(String target, String idLower, String canonicalLower, String nameLower) {
+        if ("deepseek-reasoner".equals(target)) {
+            return idLower.contains("deepseek-r1")
+                    || canonicalLower.contains("deepseek-r1")
+                    || nameLower.contains("deepseek-r1")
+                    || idLower.contains("reasoner")
+                    || canonicalLower.contains("reasoner")
+                    || nameLower.contains("reasoner");
+        }
+        if ("deepseek-chat".equals(target)) {
+            return idLower.contains("deepseek-v3")
+                    || canonicalLower.contains("deepseek-v3")
+                    || nameLower.contains("deepseek-v3")
+                    || idLower.contains("deepseek-chat")
+                    || canonicalLower.contains("deepseek-chat")
+                    || nameLower.contains("deepseek-chat");
+        }
+        return false;
+    }
+
+    private static String normalizeModelKey(String input) {
+        if (input == null) {
+            return "";
+        }
+        return input.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+    }
+
+    private static String normalizeToLatestDeepSeekModel(String model) {
+        if (model == null || model.isBlank()) {
+            return DEFAULT_MODEL;
+        }
+        String lower = model.trim().toLowerCase(Locale.ROOT);
+        if (!lower.contains("deepseek")) {
+            return model.trim();
+        }
+        if (lower.contains("reasoner") || lower.contains("r1")) {
+            return "deepseek-reasoner";
+        }
+        if (lower.contains("chat") || lower.contains("v3")) {
+            return "deepseek-chat";
+        }
+        return model.trim();
+    }
+
+    private static Integer findTokenLimitRecursively(JsonElement element, String[] candidateKeys, int depth) {
+        if (element == null || element.isJsonNull() || depth > 6) {
+            return null;
+        }
+        if (element.isJsonPrimitive()) {
+            return parseTokenNumber(element.getAsString());
+        }
+        if (element.isJsonArray()) {
+            JsonArray array = element.getAsJsonArray();
+            for (JsonElement item : array) {
+                Integer nested = findTokenLimitRecursively(item, candidateKeys, depth + 1);
+                if (nested != null) {
+                    return nested;
+                }
+            }
+            return null;
+        }
+        if (!element.isJsonObject()) {
+            return null;
+        }
+
+        JsonObject obj = element.getAsJsonObject();
+        for (String key : candidateKeys) {
+            if (!obj.has(key)) {
+                continue;
+            }
+            Integer direct = parseTokenNumber(obj.get(key).toString().replace("\"", ""));
+            if (direct != null) {
+                return direct;
+            }
+        }
+
+        for (Map.Entry<String, JsonElement> entry : obj.entrySet()) {
+            Integer nested = findTokenLimitRecursively(entry.getValue(), candidateKeys, depth + 1);
+            if (nested != null) {
+                return nested;
+            }
+        }
+        return null;
+    }
+
+    private static Integer parseTokenNumber(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String normalized = raw.trim().toLowerCase(Locale.ROOT).replace("_", "");
+        int multiplier = 1;
+        if (normalized.endsWith("k")) {
+            multiplier = 1000;
+            normalized = normalized.substring(0, normalized.length() - 1).trim();
+        }
+        normalized = normalized.replaceAll("[^0-9.]", "");
+        if (normalized.isEmpty()) {
+            return null;
+        }
+        try {
+            double value = Double.parseDouble(normalized);
+            int tokens = (int) Math.round(value * multiplier);
+            return tokens >= MIN_CONTEXT_TOKENS ? tokens : null;
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
     private static boolean ensureConfigFileExists(MinecraftServer server) throws IOException {
         Path configFile = getConfigFile(server);
         if (Files.exists(configFile)) {
@@ -477,6 +816,9 @@ public class Agent {
                 # Edit the values and run /agent reload to apply.
                 api_url=%s
                 api_key=
+                # Optional: dedicated OpenRouter key for model context lookup.
+                # If empty, will fallback to api_key.
+                openrouter_api_key=
                 model=%s
                 """.formatted(DEFAULT_API_URL, DEFAULT_MODEL);
 
@@ -576,6 +918,7 @@ public class Agent {
         private final StringBuilder answerText = new StringBuilder();
         private final StringBuilder thinkingPending = new StringBuilder();
         private final StringBuilder answerPending = new StringBuilder();
+        private Integer totalTokens = null;
         private long lastFlushAt = System.currentTimeMillis();
 
         private StreamState(ServerPlayer player) {
@@ -604,6 +947,131 @@ public class Agent {
         }
     }
 
-    private record AgentConfig(String apiUrl, String apiKey, String model) {
+    private record ConversationPrepareResult(
+            boolean allowed,
+            JsonArray requestMessages,
+            long version,
+            MutableComponent blockMessage
+    ) {
+    }
+
+    private record ContextStatus(int remainingTokens, boolean full) {
+    }
+
+    private record ChatMessage(String role, String content) {
+        private int tokenSize() {
+            return estimateTokens(content) + MESSAGE_OVERHEAD_TOKENS;
+        }
+    }
+
+    private record ApiResult(String reply, Integer totalTokens) {
+    }
+
+    private static class ConversationState {
+        private final List<ChatMessage> messages = new ArrayList<>();
+        private int usedTokens = 0;
+        private long version = 0L;
+
+        private synchronized ConversationPrepareResult prepareRequest(String prompt, int maxContextTokens) {
+            if (maxContextTokens <= 0) {
+                JsonArray payloadMessages = new JsonArray();
+                JsonObject systemMessage = new JsonObject();
+                systemMessage.addProperty("role", "system");
+                systemMessage.addProperty("content", CONTROL_BOT_SYSTEM_PROMPT);
+                payloadMessages.add(systemMessage);
+                for (ChatMessage message : messages) {
+                    JsonObject item = new JsonObject();
+                    item.addProperty("role", message.role());
+                    item.addProperty("content", message.content());
+                    payloadMessages.add(item);
+                }
+                JsonObject currentPrompt = new JsonObject();
+                currentPrompt.addProperty("role", "user");
+                currentPrompt.addProperty("content", prompt);
+                payloadMessages.add(currentPrompt);
+                return new ConversationPrepareResult(true, payloadMessages, version, null);
+            }
+            int systemTokens = estimateTokens(CONTROL_BOT_SYSTEM_PROMPT) + MESSAGE_OVERHEAD_TOKENS;
+            if (systemTokens >= maxContextTokens || usedTokens + systemTokens >= maxContextTokens) {
+                return new ConversationPrepareResult(
+                        false,
+                        null,
+                        version,
+                        i18n(
+                                "command.modid.agent.chat.context.full",
+                                "[%s] 上下文已满，请先执行 /agent new 新建对话。",
+                                AGENT_DISPLAY_NAME
+                        )
+                );
+            }
+
+            int requiredTokens = estimateTokens(prompt) + MESSAGE_OVERHEAD_TOKENS;
+            int remainingTokens = maxContextTokens - systemTokens - usedTokens;
+            if (requiredTokens > remainingTokens) {
+                return new ConversationPrepareResult(
+                        false,
+                        null,
+                        version,
+                        i18n(
+                                "command.modid.agent.chat.context.not_enough",
+                                "[%s] 当前剩余上下文为 %s tokens，本次输入预计需要 %s tokens。请执行 /agent new 新建对话。",
+                                AGENT_DISPLAY_NAME,
+                                remainingTokens,
+                                requiredTokens
+                        )
+                );
+            }
+
+            JsonArray payloadMessages = new JsonArray();
+            JsonObject systemMessage = new JsonObject();
+            systemMessage.addProperty("role", "system");
+            systemMessage.addProperty("content", CONTROL_BOT_SYSTEM_PROMPT);
+            payloadMessages.add(systemMessage);
+            for (ChatMessage message : messages) {
+                JsonObject item = new JsonObject();
+                item.addProperty("role", message.role());
+                item.addProperty("content", message.content());
+                payloadMessages.add(item);
+            }
+            JsonObject currentPrompt = new JsonObject();
+            currentPrompt.addProperty("role", "user");
+            currentPrompt.addProperty("content", prompt);
+            payloadMessages.add(currentPrompt);
+            return new ConversationPrepareResult(true, payloadMessages, version, null);
+        }
+
+        private synchronized ContextStatus commitTurn(String prompt, String reply, long expectedVersion, int maxContextTokens) {
+            if (maxContextTokens <= 0) {
+                if (version == expectedVersion) {
+                    appendMessage("user", prompt);
+                    appendMessage("assistant", reply);
+                }
+                return new ContextStatus(-1, false);
+            }
+            int systemTokens = estimateTokens(CONTROL_BOT_SYSTEM_PROMPT) + MESSAGE_OVERHEAD_TOKENS;
+            if (version != expectedVersion) {
+                int remainingTokens = Math.max(0, maxContextTokens - systemTokens - usedTokens);
+                return new ContextStatus(remainingTokens, remainingTokens <= 0);
+            }
+            appendMessage("user", prompt);
+            appendMessage("assistant", reply);
+            int remainingTokens = Math.max(0, maxContextTokens - systemTokens - usedTokens);
+            return new ContextStatus(remainingTokens, remainingTokens <= 0);
+        }
+
+        private synchronized void reset() {
+            messages.clear();
+            usedTokens = 0;
+            version++;
+        }
+
+        private void appendMessage(String role, String content) {
+            ChatMessage message = new ChatMessage(role, content == null ? "" : content);
+            messages.add(message);
+            usedTokens += message.tokenSize();
+        }
+    }
+
+    private record AgentConfig(String apiUrl, String apiKey, String model, int maxContextTokens) {
     }
 }

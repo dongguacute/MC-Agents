@@ -40,6 +40,7 @@ public class Recordbot {
     private static final String FB_RELOAD_SUCCESS = "Agent 配置已重载";
     private static final String FB_RELOAD_ERROR = "重载 Agent 配置失败: %s";
     private static final String FB_ASK_PLAYER_ONLY = "该命令只能由玩家执行。";
+    private static final String FB_NEW_SUCCESS = "已新建对话，上下文已清空。";
 
     public static void register() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
@@ -61,6 +62,8 @@ public class Recordbot {
                                 .then(Commands.literal("ask")
                                         .then(Commands.argument("prompt", StringArgumentType.greedyString())
                                                 .executes(Recordbot::handleAskCommand)))
+                                .then(Commands.literal("new")
+                                        .executes(Recordbot::handleNewCommand))
                                 .then(Commands.literal("reload")
                                         .requires(source -> source.hasPermission(2))
                                         .executes(Recordbot::handleReloadCommand))
@@ -315,6 +318,20 @@ public class Recordbot {
 
         String prompt = StringArgumentType.getString(context, "prompt");
         Agent.handleAgentPrompt(player, prompt);
+        return 1;
+    }
+
+    private static int handleNewCommand(CommandContext<CommandSourceStack> context) {
+        ServerPlayer player = context.getSource().getPlayer();
+        if (player == null) {
+            context.getSource().sendFailure(i18n("command.modid.agent.chat.ask.player_only", FB_ASK_PLAYER_ONLY));
+            return 0;
+        }
+        Agent.resetConversation(player);
+        context.getSource().sendSuccess(
+                () -> i18n("command.modid.agent.chat.new.success", FB_NEW_SUCCESS),
+                false
+        );
         return 1;
     }
 
