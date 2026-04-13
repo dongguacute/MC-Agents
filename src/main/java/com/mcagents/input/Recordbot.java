@@ -62,6 +62,9 @@ public class Recordbot {
                                 .then(Commands.literal("ask")
                                         .then(Commands.argument("prompt", StringArgumentType.greedyString())
                                                 .executes(Recordbot::handleAskCommand)))
+                                .then(Commands.literal("search")
+                                        .then(Commands.argument("query", StringArgumentType.greedyString())
+                                                .executes(Recordbot::handleSearchCommand)))
                                 .then(Commands.literal("new")
                                         .executes(Recordbot::handleNewCommand))
                                 .then(Commands.literal("reload")
@@ -318,6 +321,18 @@ public class Recordbot {
 
         String prompt = StringArgumentType.getString(context, "prompt");
         Agent.handleAgentPrompt(player, prompt);
+        return 1;
+    }
+
+    private static int handleSearchCommand(CommandContext<CommandSourceStack> context) {
+        ServerPlayer player = context.getSource().getPlayer();
+        if (player == null) {
+            context.getSource().sendFailure(i18n("command.modid.agent.chat.ask.player_only", FB_ASK_PLAYER_ONLY));
+            return 0;
+        }
+
+        String query = StringArgumentType.getString(context, "query");
+        Agent.handleWikiSearch(player, query);
         return 1;
     }
 
