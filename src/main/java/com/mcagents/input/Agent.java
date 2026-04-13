@@ -32,6 +32,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 public class Agent {
     private static final String AGENT_DISPLAY_NAME = "MCAGENT";
@@ -48,6 +49,11 @@ public class Agent {
             """;
     private static final String DEFAULT_API_URL = "https://api.openai.com/v1/chat/completions";
     private static final String DEFAULT_MODEL = "gpt-4o-mini";
+    private static final Pattern CONTROL_DIRECTIVE_LINE_PATTERN = Pattern.compile("(?im)^\\s*\\[CONTROL_BOT\\].*$");
+    private static final Pattern CONTROL_DIRECTIVE_PRESENT_PATTERN = Pattern.compile("(?is)\\[CONTROL_BOT\\]\\s*(join|leave)\\s+");
+    private static final Pattern PROMPT_LEAK_PATTERN = Pattern.compile(
+            "(?is)(你是\\s*minecraft\\s*服务器助手|当且仅当用户明确要求控制假人上下线时|\\[control_bot\\]|system\\s*prompt|developer\\s*message|提示词|instruction)"
+    );
 
     private static final int HTTP_THREADS = Math.max(4, Runtime.getRuntime().availableProcessors());
     private static final ExecutorService HTTP_EXECUTOR = new ThreadPoolExecutor(
@@ -98,18 +104,18 @@ public class Agent {
 
     public static void handleAgentPrompt(ServerPlayer player, String prompt) {
         if (prompt == null || prompt.trim().isEmpty()) {
-            player.sendSystemMessage(Component.translatable("command.modid.agent.chat.prompt.empty").withStyle(ChatFormatting.YELLOW));
+            player.sendSystemMessage(i18n("command.modid.agent.chat.prompt.empty", "请输入提示词，例如：/agent ask 帮我总结今天任务").withStyle(ChatFormatting.YELLOW));
             return;
         }
 
         AgentConfig currentConfig = config;
         if (currentConfig.apiKey().isBlank()) {
-            player.sendSystemMessage(Component.translatable("command.modid.agent.chat.api_key.missing", CONFIG_FILE_NAME).withStyle(ChatFormatting.RED));
+            player.sendSystemMessage(i18n("command.modid.agent.chat.api_key.missing", "未配置 API Key，请编辑 %s 中的 api_key", CONFIG_FILE_NAME).withStyle(ChatFormatting.RED));
             return;
         }
 
         String safePrompt = prompt.trim();
-        player.sendSystemMessage(Component.translatable("command.modid.agent.chat.requesting").withStyle(ChatFormatting.GRAY));
+        player.sendSystemMessage(i18n("command.modid.agent.chat.requesting", "[%s] 思考中...", AGENT_DISPLAY_NAME).withStyle(ChatFormatting.DARK_GRAY));
 
         CompletableFuture
                 .supplyAsync(() -> callOpenAICompatibleApi(player, safePrompt, currentConfig), HTTP_EXECUTOR)
@@ -119,22 +125,30 @@ public class Agent {
                     if (root instanceof AgentUserException agentError) {
                         sendToMainThread(player, agentError.toComponent().withStyle(ChatFormatting.RED));
                     } else {
-                        sendToMainThread(player, Component.translatable("command.modid.agent.chat.request.failed.unknown").withStyle(ChatFormatting.RED));
+                        sendToMainThread(player, i18n("command.modid.agent.chat.request.failed.unknown", "AI 请求失败：未知错误").withStyle(ChatFormatting.RED));
                     }
                     return null;
                 });
     }
 
     private static void handleAiReply(ServerPlayer player, String reply) {
+        boolean hasDirective = hasControlDirective(reply);
+        MinecraftServer server = player.getServer();
+        if (server != null) {
+            server.execute(() -> Startbot.tryHandleAiDirective(player, reply));
+        }
+        String displayReply = sanitizeReplyForDisplay(reply);
+        if (displayReply.isEmpty()) {
+            if (hasDirective) {
+                displayReply = "已执行控制指令。";
+            } else {
+                displayReply = "已收到响应，但无可展示文本。";
+            }
+        }
         sendToMainThread(
                 player,
-                Component.translatable("command.modid.agent.chat.reply", AGENT_DISPLAY_NAME, reply).withStyle(ChatFormatting.AQUA)
+                i18n("command.modid.agent.chat.reply", "┌─ %s\n└─ %s", AGENT_DISPLAY_NAME, displayReply).withStyle(ChatFormatting.AQUA)
         );
-        MinecraftServer server = player.getServer();
-        if (server == null) {
-            return;
-        }
-        server.execute(() -> Startbot.tryHandleAiDirective(player, reply));
     }
 
     private static String callOpenAICompatibleApi(ServerPlayer player, String prompt, AgentConfig currentConfig) {
@@ -310,9 +324,10 @@ public class Agent {
                 + extractText(source.get("thinking"));
         String answerText = extractText(source.get("content"));
 
-        if (!reasoningText.isEmpty()) {
-            streamState.thinkingPending.append(reasoningText);
-            streamState.thinkingText.append(reasoningText);
+        String safeReasoning = sanitizeThinkingForDisplay(reasoningText);
+        if (!safeReasoning.isEmpty()) {
+            streamState.thinkingPending.append(safeReasoning);
+            streamState.thinkingText.append(safeReasoning);
         }
         if (!answerText.isEmpty()) {
             streamState.answerPending.append(answerText);
@@ -354,12 +369,53 @@ public class Agent {
         return "";
     }
 
+    private static String sanitizeReplyForDisplay(String reply) {
+        if (reply == null || reply.isBlank()) {
+            return "";
+        }
+        String sanitized = reply.replace("\r\n", "\n").trim();
+        sanitized = CONTROL_DIRECTIVE_LINE_PATTERN.matcher(sanitized).replaceAll("").trim();
+        if (!CONTROL_BOT_SYSTEM_PROMPT.isBlank()) {
+            sanitized = sanitized.replace(CONTROL_BOT_SYSTEM_PROMPT.trim(), "").trim();
+        }
+        return sanitized;
+    }
+
+    private static String sanitizeThinkingForDisplay(String reasoning) {
+        if (reasoning == null || reasoning.isBlank()) {
+            return "";
+        }
+        String sanitized = reasoning.replace("\r\n", "\n").trim();
+        if (sanitized.isEmpty()) {
+            return "";
+        }
+        sanitized = CONTROL_DIRECTIVE_LINE_PATTERN.matcher(sanitized).replaceAll("").trim();
+        if (!CONTROL_BOT_SYSTEM_PROMPT.isBlank()) {
+            sanitized = sanitized.replace(CONTROL_BOT_SYSTEM_PROMPT.trim(), "").trim();
+        }
+        if (PROMPT_LEAK_PATTERN.matcher(sanitized).find()) {
+            return "";
+        }
+        return sanitized;
+    }
+
+    private static boolean hasControlDirective(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        return CONTROL_DIRECTIVE_PRESENT_PATTERN.matcher(text).find();
+    }
+
     private static void sendToMainThread(ServerPlayer player, Component msg) {
         MinecraftServer server = player.getServer();
         if (server == null) {
             return;
         }
         server.execute(() -> player.sendSystemMessage(msg));
+    }
+
+    private static MutableComponent i18n(String key, String fallback, Object... args) {
+        return Component.translatableWithFallback(key, fallback, args);
     }
 
     private static Map<String, String> parseKeyValueConfig(String content) {
@@ -499,7 +555,15 @@ public class Agent {
         }
 
         private MutableComponent toComponent() {
-            return Component.translatable(translationKey, args);
+            String fallback = switch (translationKey) {
+                case "command.modid.agent.chat.request.failed.http" -> "AI 请求失败：HTTP 状态码 %s";
+                case "command.modid.agent.chat.request.failed.invalid_choices" -> "AI 响应格式错误：缺少 choices 字段";
+                case "command.modid.agent.chat.request.failed.invalid_message" -> "AI 响应格式错误：缺少 message 字段";
+                case "command.modid.agent.chat.request.failed.empty" -> "AI 响应为空";
+                case "command.modid.agent.chat.request.failed.network" -> "AI 网络请求失败：%s";
+                default -> "AI 请求失败";
+            };
+            return i18n(translationKey, fallback, args);
         }
     }
 
@@ -522,6 +586,7 @@ public class Agent {
             long now = System.currentTimeMillis();
             boolean shouldFlush = force
                     || thinkingPending.length() >= FLUSH_SIZE
+                    || answerPending.length() >= FLUSH_SIZE
                     || (now - lastFlushAt) >= FLUSH_INTERVAL_MS;
             if (!shouldFlush) {
                 return;
@@ -530,7 +595,7 @@ public class Agent {
             if (thinkingPending.length() > 0) {
                 sendToMainThread(
                         player,
-                        Component.translatable("command.modid.agent.chat.thinking", AGENT_DISPLAY_NAME, thinkingPending.toString()).withStyle(ChatFormatting.DARK_GRAY)
+                        i18n("command.modid.agent.chat.thinking", "│ %s 思考: %s", AGENT_DISPLAY_NAME, thinkingPending.toString()).withStyle(ChatFormatting.DARK_GRAY)
                 );
                 thinkingPending.setLength(0);
             }

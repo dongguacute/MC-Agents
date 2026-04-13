@@ -13,6 +13,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.IOException;
@@ -38,6 +39,7 @@ public class Recordbot {
     private static final String FB_BOTLIST_ERROR = "读取 bot 列表失败: %s";
     private static final String FB_RELOAD_SUCCESS = "Agent 配置已重载";
     private static final String FB_RELOAD_ERROR = "重载 Agent 配置失败: %s";
+    private static final String FB_ASK_PLAYER_ONLY = "该命令只能由玩家执行。";
 
     public static void register() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
@@ -56,6 +58,9 @@ public class Recordbot {
                                                         .executes(Recordbot::handleRecordCommand))))
                                 .then(Commands.literal("botlist")
                                         .executes(Recordbot::handleBotListCommand))
+                                .then(Commands.literal("ask")
+                                        .then(Commands.argument("prompt", StringArgumentType.greedyString())
+                                                .executes(Recordbot::handleAskCommand)))
                                 .then(Commands.literal("reload")
                                         .requires(source -> source.hasPermission(2))
                                         .executes(Recordbot::handleReloadCommand))
@@ -299,6 +304,18 @@ public class Recordbot {
             );
             return 0;
         }
+    }
+
+    private static int handleAskCommand(CommandContext<CommandSourceStack> context) {
+        ServerPlayer player = context.getSource().getPlayer();
+        if (player == null) {
+            context.getSource().sendFailure(i18n("command.modid.agent.chat.ask.player_only", FB_ASK_PLAYER_ONLY));
+            return 0;
+        }
+
+        String prompt = StringArgumentType.getString(context, "prompt");
+        Agent.handleAgentPrompt(player, prompt);
+        return 1;
     }
 
     private static Component i18n(String key, String fallback, Object... args) {
