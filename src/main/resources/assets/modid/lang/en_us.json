@@ -1,4 +1,9 @@
 {
   "command.modid.agent.record.success": "Recorded: bot_name=%s, tag=%s",
-  "command.modid.agent.record.error": "Failed to write local data file: %s"
+  "command.modid.agent.record.error": "Failed to write local data file: %s",
+  "command.modid.agent.chat.prompt.empty": "Please provide a prompt, e.g. #agent Summarize today's tasks",
+  "command.modid.agent.chat.api_key.missing": "API key is missing. Please set MC_AGENT_API_KEY or OPENAI_API_KEY",
+  "command.modid.agent.chat.requesting": "Requesting AI...",
+  "command.modid.agent.chat.reply": "AI: %s",
+  "command.modid.agent.chat.request.failed": "AI request failed: %s"
 }

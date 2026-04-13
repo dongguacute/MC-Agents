@@ -1,4 +1,9 @@
 {
   "command.modid.agent.record.success": "已记录: bot_name=%s, tag=%s",
-  "command.modid.agent.record.error": "写入本地 data 文件失败: %s"
+  "command.modid.agent.record.error": "写入本地 data 文件失败: %s",
+  "command.modid.agent.chat.prompt.empty": "请输入提示词，例如：#agent 帮我总结今天任务",
+  "command.modid.agent.chat.api_key.missing": "未配置 API Key，请设置环境变量 MC_AGENT_API_KEY 或 OPENAI_API_KEY",
+  "command.modid.agent.chat.requesting": "正在请求 AI...",
+  "command.modid.agent.chat.reply": "AI: %s",
+  "command.modid.agent.chat.request.failed": "AI 请求失败: %s"
 }

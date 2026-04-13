@@ -3,7 +3,8 @@
 	"package": "com.mcagents.mixin",
 	"compatibilityLevel": "JAVA_17",
 	"mixins": [
-		"ExampleMixin"
+		"ExampleMixin",
+		"AgentChatMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
