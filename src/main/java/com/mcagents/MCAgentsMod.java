@@ -1,5 +1,6 @@
 package com.mcagents;
 
+import com.mcagents.input.Recordbot;
 import net.fabricmc.api.ModInitializer;
 
 import org.slf4j.Logger;
@@ -19,6 +20,7 @@ public class MCAgentsMod implements ModInitializer {
 		// However, some things (like resources) may still be uninitialized.
 		// Proceed with mild caution.
 
-		LOGGER.info("Hello Fabric world!");
+		Recordbot.register();
+		LOGGER.info("MC-Agents initialized.");
 	}
 }
