@@ -1,6 +1,12 @@
 {
   "command.modid.agent.record.success": "Recorded: bot_name=%s, tag=%s",
   "command.modid.agent.record.error": "Failed to write local data file: %s",
+  "command.modid.agent.record.remove.success": "Removed %s record(s): bot_name=%s, tag=%s",
+  "command.modid.agent.record.remove.none": "No matching record found for bot_name=%s, tag=%s",
+  "command.modid.agent.record.remove.by_name.success": "Removed %s record(s) for bot_name=%s",
+  "command.modid.agent.record.remove.by_name.none": "No matching record found for bot_name=%s",
+  "command.modid.agent.record.remove.all.success": "Removed all records: %s item(s)",
+  "command.modid.agent.record.remove.all.empty": "No records to remove.",
   "command.modid.agent.chat.prompt.empty": "Please provide a prompt, e.g. #agent Summarize today's tasks",
   "command.modid.agent.chat.api_key.missing": "API key is missing. Please edit api_key in %s",
   "command.modid.agent.chat.requesting": "Requesting AI...",
@@ -28,6 +34,8 @@
   "command.modid.agent.control.records.load_failed": "Failed to read record file: %s",
   "command.modid.agent.control.tag.matched": "Bots matched by tag: %s",
   "command.modid.agent.control.target.not_found_or_invalid": "No bots matched this tag, and input is not a valid bot_name (3-16 letters/numbers/underscore)",
+  "command.modid.agent.control.rate_limited": "Too many requests: at most %2$s control requests within %1$s seconds. Retry in %3$s seconds",
+  "command.modid.agent.control.conflict.detected": "Conflicting directive detected. Skipped bots: %s. Recent action by %s: %s. Please retry later",
   "command.modid.agent.control.restore.failed": "Bot online, but failed to restore previous position: %s, %s",
   "command.modid.agent.reload.success": "Agent config reloaded",
   "command.modid.agent.reload.error": "Failed to reload agent config: %s"

@@ -16,16 +16,24 @@ import net.minecraft.server.level.ServerPlayer;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class Startbot {
     private static final String RECORD_FILE_NAME = "agent_records.json";
     private static final String BOT_STATE_FILE_NAME = "agent_bot_state.json";
+    private static final long RATE_LIMIT_WINDOW_MS = 10_000L;
+    private static final int RATE_LIMIT_MAX_REQUESTS = 3;
+    private static final long DIRECTIVE_CONFLICT_WINDOW_MS = 10_000L;
     private static final Pattern BOT_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9_]{3,16}$");
     private static final Pattern AI_CONTROL_PATTERN = Pattern.compile("(?i)\\[CONTROL_BOT\\]\\s*(join|leave)\\s+(?:\"([^\"]{1,64})\"|([^\\s]{1,64}))");
+    private static final Map<String, BotDirectiveState> RECENT_BOT_DIRECTIVES = new HashMap<>();
+    private static final Map<String, ArrayDeque<Long>> REQUEST_TIMESTAMPS_BY_REQUESTER = new HashMap<>();
 
     public static int handleBotJoinCommand(CommandContext<CommandSourceStack> context) {
         String botName = StringArgumentType.getString(context, "bot_name");
@@ -55,12 +63,6 @@ public class Startbot {
     }
 
     private static int handleControl(CommandSourceStack source, String action, String botNameOrTag) {
-        List<String> targetBotNames = resolveBotTargets(source, botNameOrTag);
-        if (targetBotNames == null || targetBotNames.isEmpty()) {
-            return 0;
-        }
-
-        MinecraftServer server = source.getServer();
         String subCommand;
         if ("join".equalsIgnoreCase(action)) {
             subCommand = "spawn";
@@ -71,9 +73,39 @@ public class Startbot {
             return 0;
         }
 
+        RateLimitResult rateLimitResult = checkAndRecordRateLimit(source);
+        if (!rateLimitResult.allowed()) {
+            source.sendFailure(Component.translatable(
+                    "command.modid.agent.control.rate_limited",
+                    rateLimitResult.windowSeconds(),
+                    rateLimitResult.maxRequests(),
+                    rateLimitResult.retryAfterSeconds()
+            ));
+            return 0;
+        }
+
+        List<String> targetBotNames = resolveBotTargets(source, botNameOrTag);
+        if (targetBotNames == null || targetBotNames.isEmpty()) {
+            return 0;
+        }
+
+        MinecraftServer server = source.getServer();
+        ConflictCheckResult conflictCheck = filterConflictingTargets(source, action, targetBotNames);
+        if (!conflictCheck.conflictingBots().isEmpty()) {
+            source.sendFailure(Component.translatable(
+                    "command.modid.agent.control.conflict.detected",
+                    String.join(", ", conflictCheck.conflictingBots()),
+                    conflictCheck.lastRequester(),
+                    conflictCheck.lastAction()
+            ));
+        }
+        if (conflictCheck.executableBots().isEmpty()) {
+            return 0;
+        }
+
         int successCount = 0;
         List<String> failedBots = new ArrayList<>();
-        for (String botName : targetBotNames) {
+        for (String botName : conflictCheck.executableBots()) {
             if ("leave".equalsIgnoreCase(action)) {
                 saveBotCurrentPosition(server, botName);
             }
@@ -99,6 +131,7 @@ public class Startbot {
                 source.sendFailure(Component.translatable("command.modid.agent.control.command.failed", carpetCommand, e.getMessage()));
             }
         }
+        markRecentDirective(source, action, conflictCheck.executableBots());
 
         int finalSuccessCount = successCount;
         source.sendSuccess(() -> Component.translatable("command.modid.agent.control.batch.result", finalSuccessCount, failedBots.size()), true);
@@ -252,5 +285,82 @@ public class Startbot {
     private static CommandSourceStack createAgentSourceFromPlayer(ServerPlayer player) {
         return player.createCommandSourceStack()
                 .withPermission(4);
+    }
+
+    private static ConflictCheckResult filterConflictingTargets(CommandSourceStack source, String action, List<String> targetBotNames) {
+        long now = System.currentTimeMillis();
+        String requester = source.getTextName();
+        List<String> executableBots = new ArrayList<>();
+        List<String> conflictingBots = new ArrayList<>();
+        String lastRequester = "";
+        String lastAction = "";
+
+        synchronized (RECENT_BOT_DIRECTIVES) {
+            RECENT_BOT_DIRECTIVES.entrySet().removeIf(entry -> now - entry.getValue().timestampMs() > DIRECTIVE_CONFLICT_WINDOW_MS);
+            for (String botName : targetBotNames) {
+                BotDirectiveState previous = RECENT_BOT_DIRECTIVES.get(botName);
+                if (previous == null || previous.requester().equalsIgnoreCase(requester)) {
+                    executableBots.add(botName);
+                    continue;
+                }
+
+                conflictingBots.add(botName);
+                if (lastRequester.isEmpty()) {
+                    lastRequester = previous.requester();
+                    lastAction = previous.action();
+                }
+            }
+        }
+        return new ConflictCheckResult(executableBots, conflictingBots, lastRequester, lastAction);
+    }
+
+    private static void markRecentDirective(CommandSourceStack source, String action, List<String> botNames) {
+        String requester = source.getTextName();
+        long now = System.currentTimeMillis();
+        synchronized (RECENT_BOT_DIRECTIVES) {
+            for (String botName : botNames) {
+                RECENT_BOT_DIRECTIVES.put(botName, new BotDirectiveState(action, requester, now));
+            }
+        }
+    }
+
+    private record BotDirectiveState(String action, String requester, long timestampMs) {
+    }
+
+    private static RateLimitResult checkAndRecordRateLimit(CommandSourceStack source) {
+        String requester = source.getTextName();
+        long now = System.currentTimeMillis();
+
+        synchronized (REQUEST_TIMESTAMPS_BY_REQUESTER) {
+            ArrayDeque<Long> timestamps = REQUEST_TIMESTAMPS_BY_REQUESTER.computeIfAbsent(requester, key -> new ArrayDeque<>());
+            while (!timestamps.isEmpty() && now - timestamps.peekFirst() > RATE_LIMIT_WINDOW_MS) {
+                timestamps.pollFirst();
+            }
+
+            if (timestamps.size() >= RATE_LIMIT_MAX_REQUESTS) {
+                long retryAfterMs = (timestamps.peekFirst() + RATE_LIMIT_WINDOW_MS) - now;
+                long retryAfterSeconds = Math.max(1L, (long) Math.ceil(retryAfterMs / 1000.0D));
+                return new RateLimitResult(false, retryAfterSeconds, RATE_LIMIT_MAX_REQUESTS, RATE_LIMIT_WINDOW_MS / 1000L);
+            }
+
+            timestamps.addLast(now);
+            return new RateLimitResult(true, 0L, RATE_LIMIT_MAX_REQUESTS, RATE_LIMIT_WINDOW_MS / 1000L);
+        }
+    }
+
+    private record ConflictCheckResult(
+            List<String> executableBots,
+            List<String> conflictingBots,
+            String lastRequester,
+            String lastAction
+    ) {
+    }
+
+    private record RateLimitResult(
+            boolean allowed,
+            long retryAfterSeconds,
+            int maxRequests,
+            long windowSeconds
+    ) {
     }
 }

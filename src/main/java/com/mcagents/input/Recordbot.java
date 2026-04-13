@@ -24,12 +24,33 @@ import java.nio.file.StandardOpenOption;
 public class Recordbot {
     private static final String RECORD_FILE_NAME = "agent_records.json";
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final String FB_RECORD_SUCCESS = "已记录: bot_name=%s, tag=%s";
+    private static final String FB_RECORD_ERROR = "写入本地 data 文件失败: %s";
+    private static final String FB_REMOVE_SUCCESS = "已删除 %s 条记录: bot_name=%s, tag=%s";
+    private static final String FB_REMOVE_NONE = "未找到匹配记录: bot_name=%s, tag=%s";
+    private static final String FB_REMOVE_BY_NAME_SUCCESS = "已删除 %s 条 bot_name=%s 的记录";
+    private static final String FB_REMOVE_BY_NAME_NONE = "未找到 bot_name=%s 的记录";
+    private static final String FB_REMOVE_ALL_SUCCESS = "已删除全部记录，共 %s 条";
+    private static final String FB_REMOVE_ALL_EMPTY = "当前没有可删除的记录。";
+    private static final String FB_BOTLIST_EMPTY = "当前没有已记录的 bot。";
+    private static final String FB_BOTLIST_HEADER = "已记录的 bot 列表：";
+    private static final String FB_BOTLIST_ITEM = "- bot_name: %s, tag: %s";
+    private static final String FB_BOTLIST_ERROR = "读取 bot 列表失败: %s";
+    private static final String FB_RELOAD_SUCCESS = "Agent 配置已重载";
+    private static final String FB_RELOAD_ERROR = "重载 Agent 配置失败: %s";
 
     public static void register() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 dispatcher.register(
                         Commands.literal("agent")
                                 .then(Commands.literal("record")
+                                        .then(Commands.literal("remove")
+                                                .then(Commands.literal("all")
+                                                        .executes(Recordbot::handleRemoveAllRecordsCommand))
+                                                .then(Commands.argument("bot_name", StringArgumentType.word())
+                                                        .executes(Recordbot::handleRemoveRecordByBotNameCommand)
+                                                        .then(Commands.argument("tag", StringArgumentType.greedyString())
+                                                                .executes(Recordbot::handleRemoveRecordCommand))))
                                         .then(Commands.argument("bot_name", StringArgumentType.word())
                                                 .then(Commands.argument("tag", StringArgumentType.greedyString())
                                                         .executes(Recordbot::handleRecordCommand))))
@@ -60,21 +81,139 @@ public class Recordbot {
             record.addProperty("tag", tag);
             records.add(record);
 
-            Files.writeString(
-                    dataFile,
-                    GSON.toJson(records),
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.TRUNCATE_EXISTING
-            );
+            writeRecords(dataFile, records);
 
             context.getSource().sendSuccess(
-                    () -> Component.translatable("command.modid.agent.record.success", botName, tag),
+                    () -> i18n("command.modid.agent.record.success", FB_RECORD_SUCCESS, botName, tag),
                     false
             );
             return 1;
         } catch (IOException e) {
             context.getSource().sendFailure(
-                    Component.translatable("command.modid.agent.record.error", e.getMessage())
+                    i18n("command.modid.agent.record.error", FB_RECORD_ERROR, e.getMessage())
+            );
+            return 0;
+        }
+    }
+
+    private static int handleRemoveRecordCommand(CommandContext<CommandSourceStack> context) {
+        String botName = StringArgumentType.getString(context, "bot_name");
+        String tag = StringArgumentType.getString(context, "tag");
+
+        try {
+            Path dataFile = getDataFile(context.getSource().getServer());
+            JsonArray records = readRecords(dataFile);
+            JsonArray updatedRecords = new JsonArray();
+            int removedCount = 0;
+
+            for (JsonElement element : records) {
+                if (!element.isJsonObject()) {
+                    updatedRecords.add(element);
+                    continue;
+                }
+
+                JsonObject record = element.getAsJsonObject();
+                String currentBotName = record.has("bot_name") ? record.get("bot_name").getAsString() : "";
+                String currentTag = record.has("tag") ? record.get("tag").getAsString() : "";
+                if (botName.equals(currentBotName) && tag.equals(currentTag)) {
+                    removedCount++;
+                    continue;
+                }
+                updatedRecords.add(record);
+            }
+
+            if (removedCount == 0) {
+                context.getSource().sendFailure(
+                        i18n("command.modid.agent.record.remove.none", FB_REMOVE_NONE, botName, tag)
+                );
+                return 0;
+            }
+
+            writeRecords(dataFile, updatedRecords);
+            int finalRemovedCount = removedCount;
+            context.getSource().sendSuccess(
+                    () -> i18n("command.modid.agent.record.remove.success", FB_REMOVE_SUCCESS, finalRemovedCount, botName, tag),
+                    false
+            );
+            return 1;
+        } catch (IOException e) {
+            context.getSource().sendFailure(
+                    i18n("command.modid.agent.record.error", FB_RECORD_ERROR, e.getMessage())
+            );
+            return 0;
+        }
+    }
+
+    private static int handleRemoveRecordByBotNameCommand(CommandContext<CommandSourceStack> context) {
+        String botName = StringArgumentType.getString(context, "bot_name");
+
+        try {
+            Path dataFile = getDataFile(context.getSource().getServer());
+            JsonArray records = readRecords(dataFile);
+            JsonArray updatedRecords = new JsonArray();
+            int removedCount = 0;
+
+            for (JsonElement element : records) {
+                if (!element.isJsonObject()) {
+                    updatedRecords.add(element);
+                    continue;
+                }
+
+                JsonObject record = element.getAsJsonObject();
+                String currentBotName = record.has("bot_name") ? record.get("bot_name").getAsString() : "";
+                if (botName.equals(currentBotName)) {
+                    removedCount++;
+                    continue;
+                }
+                updatedRecords.add(record);
+            }
+
+            if (removedCount == 0) {
+                context.getSource().sendFailure(
+                        i18n("command.modid.agent.record.remove.by_name.none", FB_REMOVE_BY_NAME_NONE, botName)
+                );
+                return 0;
+            }
+
+            writeRecords(dataFile, updatedRecords);
+            int finalRemovedCount = removedCount;
+            context.getSource().sendSuccess(
+                    () -> i18n("command.modid.agent.record.remove.by_name.success", FB_REMOVE_BY_NAME_SUCCESS, finalRemovedCount, botName),
+                    false
+            );
+            return 1;
+        } catch (IOException e) {
+            context.getSource().sendFailure(
+                    i18n("command.modid.agent.record.error", FB_RECORD_ERROR, e.getMessage())
+            );
+            return 0;
+        }
+    }
+
+    private static int handleRemoveAllRecordsCommand(CommandContext<CommandSourceStack> context) {
+        try {
+            Path dataFile = getDataFile(context.getSource().getServer());
+            JsonArray records = readRecords(dataFile);
+            int removedCount = records.size();
+
+            if (removedCount == 0) {
+                context.getSource().sendSuccess(
+                        () -> i18n("command.modid.agent.record.remove.all.empty", FB_REMOVE_ALL_EMPTY),
+                        false
+                );
+                return 1;
+            }
+
+            writeRecords(dataFile, new JsonArray());
+            int finalRemovedCount = removedCount;
+            context.getSource().sendSuccess(
+                    () -> i18n("command.modid.agent.record.remove.all.success", FB_REMOVE_ALL_SUCCESS, finalRemovedCount),
+                    false
+            );
+            return 1;
+        } catch (IOException e) {
+            context.getSource().sendFailure(
+                    i18n("command.modid.agent.record.error", FB_RECORD_ERROR, e.getMessage())
             );
             return 0;
         }
@@ -86,14 +225,14 @@ public class Recordbot {
 
             if (records.isEmpty()) {
                 context.getSource().sendSuccess(
-                        () -> Component.translatable("command.modid.agent.botlist.empty"),
+                        () -> i18n("command.modid.agent.botlist.empty", FB_BOTLIST_EMPTY),
                         false
                 );
                 return 1;
             }
 
             context.getSource().sendSuccess(
-                    () -> Component.translatable("command.modid.agent.botlist.header"),
+                    () -> i18n("command.modid.agent.botlist.header", FB_BOTLIST_HEADER),
                     false
             );
 
@@ -107,14 +246,14 @@ public class Recordbot {
                 String tag = record.has("tag") ? record.get("tag").getAsString() : "unknown";
 
                 context.getSource().sendSuccess(
-                        () -> Component.translatable("command.modid.agent.botlist.item", botName, tag),
+                        () -> i18n("command.modid.agent.botlist.item", FB_BOTLIST_ITEM, botName, tag),
                         false
                 );
             }
             return 1;
         } catch (IOException e) {
             context.getSource().sendFailure(
-                    Component.translatable("command.modid.agent.botlist.error", e.getMessage())
+                    i18n("command.modid.agent.botlist.error", FB_BOTLIST_ERROR, e.getMessage())
             );
             return 0;
         }
@@ -137,20 +276,33 @@ public class Recordbot {
         }
     }
 
+    private static void writeRecords(Path dataFile, JsonArray records) throws IOException {
+        Files.writeString(
+                dataFile,
+                GSON.toJson(records),
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING
+        );
+    }
+
     private static int handleReloadCommand(CommandContext<CommandSourceStack> context) {
         try {
             Agent.reloadConfig(context.getSource().getServer());
             context.getSource().sendSuccess(
-                    () -> Component.translatable("command.modid.agent.reload.success"),
+                    () -> i18n("command.modid.agent.reload.success", FB_RELOAD_SUCCESS),
                     true
             );
             return 1;
         } catch (IOException e) {
             context.getSource().sendFailure(
-                    Component.translatable("command.modid.agent.reload.error", e.getMessage())
+                    i18n("command.modid.agent.reload.error", FB_RELOAD_ERROR, e.getMessage())
             );
             return 0;
         }
+    }
+
+    private static Component i18n(String key, String fallback, Object... args) {
+        return Component.translatableWithFallback(key, fallback, args);
     }
 
     private static Path getDataFile(MinecraftServer server) throws IOException {
