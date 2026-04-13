@@ -5,6 +5,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -76,31 +77,31 @@ public class Agent {
 
     public static void handleAgentPrompt(ServerPlayer player, String prompt) {
         if (prompt == null || prompt.trim().isEmpty()) {
-            player.sendSystemMessage(Component.literal("请输入提示词，例如：#agent 帮我总结今天任务"));
+            player.sendSystemMessage(Component.literal("请输入提示词，例如：#agent 帮我总结今天任务").withStyle(ChatFormatting.YELLOW));
             return;
         }
 
         AgentConfig currentConfig = config;
         if (currentConfig.apiKey().isBlank()) {
-            player.sendSystemMessage(Component.literal("未配置 API Key，请编辑 " + CONFIG_FILE_NAME + " 中的 api_key"));
+            player.sendSystemMessage(Component.literal("未配置 API Key，请编辑 " + CONFIG_FILE_NAME + " 中的 api_key").withStyle(ChatFormatting.RED));
             return;
         }
 
         String safePrompt = prompt.trim();
-        player.sendSystemMessage(Component.literal("正在请求 AI..."));
+        player.sendSystemMessage(Component.literal("正在请求 AI...").withStyle(ChatFormatting.GRAY));
 
         CompletableFuture
                 .supplyAsync(() -> callOpenAICompatibleApi(player, safePrompt, currentConfig), HTTP_EXECUTOR)
                 .thenAccept(reply -> sendToMainThread(
                         player,
-                        Component.literal(AGENT_DISPLAY_NAME + ": " + reply)
+                        Component.literal(AGENT_DISPLAY_NAME + ": " + reply).withStyle(ChatFormatting.AQUA)
                 ))
                 .exceptionally(ex -> {
                     Throwable root = unwrap(ex);
                     if (root instanceof AgentUserException agentError) {
-                        sendToMainThread(player, Component.literal(agentError.message));
+                        sendToMainThread(player, Component.literal(agentError.message).withStyle(ChatFormatting.RED));
                     } else {
-                        sendToMainThread(player, Component.literal("AI 请求失败：未知错误"));
+                        sendToMainThread(player, Component.literal("AI 请求失败：未知错误").withStyle(ChatFormatting.RED));
                     }
                     return null;
                 });
@@ -467,20 +468,19 @@ public class Agent {
             long now = System.currentTimeMillis();
             boolean shouldFlush = force
                     || thinkingPending.length() >= FLUSH_SIZE
-                    || answerPending.length() >= FLUSH_SIZE
                     || (now - lastFlushAt) >= FLUSH_INTERVAL_MS;
             if (!shouldFlush) {
                 return;
             }
 
             if (thinkingPending.length() > 0) {
-                sendToMainThread(player, Component.literal(AGENT_DISPLAY_NAME + "[思考]: " + thinkingPending));
+                sendToMainThread(
+                        player,
+                        Component.literal(AGENT_DISPLAY_NAME + "[思考]: " + thinkingPending).withStyle(ChatFormatting.DARK_GRAY)
+                );
                 thinkingPending.setLength(0);
             }
-            if (answerPending.length() > 0) {
-                sendToMainThread(player, Component.literal(AGENT_DISPLAY_NAME + "[输出中]: " + answerPending));
-                answerPending.setLength(0);
-            }
+            answerPending.setLength(0);
             lastFlushAt = now;
         }
     }
