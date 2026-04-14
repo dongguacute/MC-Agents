@@ -10,10 +10,12 @@
 
 | Component | Version / notes |
 |-----------|-----------------|
-| **Minecraft** | 1.21.4 (`~1.21.4` in `fabric.mod.json`) |
+| **Minecraft** | **Supported range**: `>=1.19.4 <1.23` (see `depends.minecraft` in `fabric.mod.json`). Targets **Java Edition** releases including **1.19.4**, **1.20.x** (e.g. 1.20.1–1.20.6), and **1.21.x** (from 1.21.1 onward on the 1.21 line); **not** 1.19.3 or older. |
 | **Java** | 17 or newer (Gradle build targets Java 17) |
 | **Fabric Loader** | ≥ 0.18.6 |
-| **Fabric API** | Required (see `gradle.properties` for the pinned version, e.g. `0.119.4+1.21.4`) |
+| **Fabric API** | Required; must match your game version (pick the correct `fabric-api` artifact from the [Fabric develop page](https://fabricmc.net/develop/) or Maven). Local dev defaults are in `gradle.properties` (e.g. `0.119.4+1.21.4`). |
+
+Release builds (`.github/workflows/build.yml`) produce one `mc-agents-<minecraft-version>.jar` per supported **release** that has a published Fabric API mapping, and attach them to the GitHub Release.
 
 ### Optional but recommended for bot control
 

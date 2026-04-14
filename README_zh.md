@@ -10,10 +10,12 @@
 
 | 组件 | 版本 / 说明 |
 |------|-------------|
-| **Minecraft** | 1.21.4（`fabric.mod.json` 中为 `~1.21.4`） |
+| **Minecraft** | **兼容范围**：`>=1.19.4 <1.23`（见 `fabric.mod.json` 中 `depends.minecraft`）。适用于 **Java 版** 正式版，含 **1.19.4**、**1.20.x**（如 1.20.1–1.20.6）、**1.21.x**（如 1.21.1 起至当前 1.21 线）等；不含 1.19.3 及更早。 |
 | **Java** | 17 或更高（Gradle 编译目标为 Java 17） |
 | **Fabric Loader** | ≥ 0.18.6 |
-| **Fabric API** | 必需（具体版本见 `gradle.properties`，例如 `0.119.4+1.21.4`） |
+| **Fabric API** | 必需；须与游戏版本匹配（可从 [Fabric 开发页](https://fabricmc.net/develop/) 或各版本对应的 `fabric-api` 坐标选择）。本地开发默认见 `gradle.properties`（例如 `0.119.4+1.21.4`）。 |
+
+发布构建（`.github/workflows/build.yml`）会为上述兼容范围内、Fabric 已发布对应 API 的各 **Minecraft 正式版** 分别产出 `mc-agents-<游戏版本>.jar`，并上传到 GitHub Release。
 
 ### 假人控制（可选但建议安装）
 
