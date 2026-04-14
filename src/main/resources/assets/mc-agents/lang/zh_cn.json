@@ -21,6 +21,7 @@
   "command.modid.agent.chat.api_key.missing": "未配置 API Key，请编辑 %s 中的 api_key",
   "command.modid.agent.chat.requesting": "[%s] 思考中...",
   "command.modid.agent.chat.compound_split": "[%s] 本条指令已拆成 %s 个子任务，将依次执行。",
+  "command.modid.agent.chat.compound_list_header": "[%s] 子任务列表：",
   "command.modid.agent.chat.compound_progress": "[%s] 子任务 %s/%s…",
   "command.modid.agent.chat.task.done": "[%s] 对话完成",
   "command.modid.agent.chat.reply": "┌─ %s\n└─ %s",

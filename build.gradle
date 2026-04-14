@@ -3,15 +3,21 @@ plugins {
 	id 'maven-publish'
 }
 
-version = project.mod_version
+// 优先使用 git describe（标签/提交/dirty）；无仓库或失败时回退到 gradle.properties 的 mod_version
+def gitDescribeVersion = providers.exec {
+	workingDir = rootDir
+	commandLine("git", "describe", "--tags", "--always", "--dirty=-dirty")
+	ignoreExitValue = true
+}.standardOutput.asText.map { out ->
+	def v = out.trim()
+	v.isEmpty() ? project.mod_version : v
+}
+version = gitDescribeVersion
 group = project.maven_group
 
 repositories {
-	// Add repositories to retrieve artifacts from in here.
-	// You should only use this when depending on other mods because
-	// Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
-	// See https://docs.gradle.org/current/userguide/declaring_repositories.html
-	// for more information about repositories.
+	// 显式声明，便于 IDE / 语言服务解析第三方依赖（如 openai-java）
+	mavenCentral()
 }
 
 loom {
@@ -30,7 +36,12 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
-	
+
+	// OpenAI 官方 Java SDK：implementation 便于 IDE 解析；include(implementation(...), transitive) 将 SDK 及 OkHttp 等打入模组 JAR
+	implementation "com.openai:openai-java:${project.openai_java_version}"
+	include(implementation("com.openai:openai-java:${project.openai_java_version}")) {
+		transitive = true
+	}
 }
 
 processResources {

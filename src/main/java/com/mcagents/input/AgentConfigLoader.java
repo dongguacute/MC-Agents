@@ -70,14 +70,18 @@ final class AgentConfigLoader {
     }
 
     static Path getAgentDataDirectory(MinecraftServer server) {
-        return getServerRootDirectory(server).resolve(AgentConstants.DATA_DIR_NAME);
+        return getModConfigDirectory(server).resolve(AgentConstants.DATA_DIR_NAME);
+    }
+
+    private static Path getModConfigDirectory(MinecraftServer server) {
+        return getServerRootDirectory(server).resolve(AgentConstants.CONFIG_DIR_NAME);
     }
 
     private static Path getConfigFile(MinecraftServer server) {
-        return getServerRootDirectory(server).resolve(AgentConstants.CONFIG_FILE_NAME);
+        return getModConfigDirectory(server).resolve(AgentConstants.CONFIG_FILE_NAME);
     }
 
-    private static Path getServerRootDirectory(MinecraftServer server) {
+    static Path getServerRootDirectory(MinecraftServer server) {
         Path worldRoot = server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize();
         Path cursor = worldRoot;
 
@@ -97,6 +101,7 @@ final class AgentConfigLoader {
         Path worldRoot = server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize();
         Path worldParent = worldRoot.getParent() != null ? worldRoot.getParent() : worldRoot;
         return new Path[]{
+                serverRoot.resolve(AgentConstants.CONFIG_FILE_NAME),
                 serverRoot.resolve("agentsdata").resolve(AgentConstants.CONFIG_FILE_NAME),
                 worldParent.resolve(AgentConstants.CONFIG_FILE_NAME),
                 worldRoot.resolve(AgentConstants.CONFIG_FILE_NAME)

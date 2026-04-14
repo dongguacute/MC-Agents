@@ -10,10 +10,10 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.mcagents.MCAgentsMod;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
-import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.storage.LevelResource;
@@ -100,13 +100,13 @@ public class Recordbot {
 
             CommandSourceFeedback.sendSuccess(
                     context.getSource(),
-                    i18n("command.modid.agent.record.success", FB_RECORD_SUCCESS, botName, tag),
+                    AgentMessaging.i18n(context.getSource(),"command.modid.agent.record.success", FB_RECORD_SUCCESS, botName, tag),
                     false
             );
             return 1;
         } catch (IOException e) {
             context.getSource().sendFailure(
-                    i18n("command.modid.agent.record.error", FB_RECORD_ERROR, e.getMessage())
+                    AgentMessaging.i18n(context.getSource(),"command.modid.agent.record.error", FB_RECORD_ERROR, e.getMessage())
             );
             return 0;
         }
@@ -140,7 +140,7 @@ public class Recordbot {
 
             if (removedCount == 0) {
                 context.getSource().sendFailure(
-                        i18n("command.modid.agent.record.remove.none", FB_REMOVE_NONE, botName, tag)
+                        AgentMessaging.i18n(context.getSource(),"command.modid.agent.record.remove.none", FB_REMOVE_NONE, botName, tag)
                 );
                 return 0;
             }
@@ -149,13 +149,13 @@ public class Recordbot {
             int finalRemovedCount = removedCount;
             CommandSourceFeedback.sendSuccess(
                     context.getSource(),
-                    i18n("command.modid.agent.record.remove.success", FB_REMOVE_SUCCESS, finalRemovedCount, botName, tag),
+                    AgentMessaging.i18n(context.getSource(),"command.modid.agent.record.remove.success", FB_REMOVE_SUCCESS, finalRemovedCount, botName, tag),
                     false
             );
             return 1;
         } catch (IOException e) {
             context.getSource().sendFailure(
-                    i18n("command.modid.agent.record.error", FB_RECORD_ERROR, e.getMessage())
+                    AgentMessaging.i18n(context.getSource(),"command.modid.agent.record.error", FB_RECORD_ERROR, e.getMessage())
             );
             return 0;
         }
@@ -187,7 +187,7 @@ public class Recordbot {
 
             if (removedCount == 0) {
                 context.getSource().sendFailure(
-                        i18n("command.modid.agent.record.remove.by_name.none", FB_REMOVE_BY_NAME_NONE, botName)
+                        AgentMessaging.i18n(context.getSource(),"command.modid.agent.record.remove.by_name.none", FB_REMOVE_BY_NAME_NONE, botName)
                 );
                 return 0;
             }
@@ -196,13 +196,13 @@ public class Recordbot {
             int finalRemovedCount = removedCount;
             CommandSourceFeedback.sendSuccess(
                     context.getSource(),
-                    i18n("command.modid.agent.record.remove.by_name.success", FB_REMOVE_BY_NAME_SUCCESS, finalRemovedCount, botName),
+                    AgentMessaging.i18n(context.getSource(),"command.modid.agent.record.remove.by_name.success", FB_REMOVE_BY_NAME_SUCCESS, finalRemovedCount, botName),
                     false
             );
             return 1;
         } catch (IOException e) {
             context.getSource().sendFailure(
-                    i18n("command.modid.agent.record.error", FB_RECORD_ERROR, e.getMessage())
+                    AgentMessaging.i18n(context.getSource(),"command.modid.agent.record.error", FB_RECORD_ERROR, e.getMessage())
             );
             return 0;
         }
@@ -217,7 +217,7 @@ public class Recordbot {
             if (removedCount == 0) {
                 CommandSourceFeedback.sendSuccess(
                         context.getSource(),
-                        i18n("command.modid.agent.record.remove.all.empty", FB_REMOVE_ALL_EMPTY),
+                        AgentMessaging.i18n(context.getSource(),"command.modid.agent.record.remove.all.empty", FB_REMOVE_ALL_EMPTY),
                         false
                 );
                 return 1;
@@ -227,13 +227,13 @@ public class Recordbot {
             int finalRemovedCount = removedCount;
             CommandSourceFeedback.sendSuccess(
                     context.getSource(),
-                    i18n("command.modid.agent.record.remove.all.success", FB_REMOVE_ALL_SUCCESS, finalRemovedCount),
+                    AgentMessaging.i18n(context.getSource(),"command.modid.agent.record.remove.all.success", FB_REMOVE_ALL_SUCCESS, finalRemovedCount),
                     false
             );
             return 1;
         } catch (IOException e) {
             context.getSource().sendFailure(
-                    i18n("command.modid.agent.record.error", FB_RECORD_ERROR, e.getMessage())
+                    AgentMessaging.i18n(context.getSource(),"command.modid.agent.record.error", FB_RECORD_ERROR, e.getMessage())
             );
             return 0;
         }
@@ -246,7 +246,7 @@ public class Recordbot {
             if (records.isEmpty()) {
                 CommandSourceFeedback.sendSuccess(
                         context.getSource(),
-                        i18n("command.modid.agent.botlist.empty", FB_BOTLIST_EMPTY),
+                        AgentMessaging.i18n(context.getSource(),"command.modid.agent.botlist.empty", FB_BOTLIST_EMPTY),
                         false
                 );
                 return 1;
@@ -254,7 +254,7 @@ public class Recordbot {
 
             CommandSourceFeedback.sendSuccess(
                     context.getSource(),
-                    i18n("command.modid.agent.botlist.header", FB_BOTLIST_HEADER),
+                    AgentMessaging.i18n(context.getSource(),"command.modid.agent.botlist.header", FB_BOTLIST_HEADER),
                     false
             );
 
@@ -269,14 +269,14 @@ public class Recordbot {
 
                 CommandSourceFeedback.sendSuccess(
                         context.getSource(),
-                        i18n("command.modid.agent.botlist.item", FB_BOTLIST_ITEM, botName, tag),
+                        AgentMessaging.i18n(context.getSource(),"command.modid.agent.botlist.item", FB_BOTLIST_ITEM, botName, tag),
                         false
                 );
             }
             return 1;
         } catch (IOException e) {
             context.getSource().sendFailure(
-                    i18n("command.modid.agent.botlist.error", FB_BOTLIST_ERROR, e.getMessage())
+                    AgentMessaging.i18n(context.getSource(),"command.modid.agent.botlist.error", FB_BOTLIST_ERROR, e.getMessage())
             );
             return 0;
         }
@@ -313,13 +313,13 @@ public class Recordbot {
             Agent.reloadConfig(context.getSource().getServer());
             CommandSourceFeedback.sendSuccess(
                     context.getSource(),
-                    i18n("command.modid.agent.reload.success", FB_RELOAD_SUCCESS),
+                    AgentMessaging.i18n(context.getSource(),"command.modid.agent.reload.success", FB_RELOAD_SUCCESS),
                     true
             );
             return 1;
         } catch (IOException e) {
             context.getSource().sendFailure(
-                    i18n("command.modid.agent.reload.error", FB_RELOAD_ERROR, e.getMessage())
+                    AgentMessaging.i18n(context.getSource(),"command.modid.agent.reload.error", FB_RELOAD_ERROR, e.getMessage())
             );
             return 0;
         }
@@ -328,7 +328,7 @@ public class Recordbot {
     private static int handleAskCommand(CommandContext<CommandSourceStack> context) {
         ServerPlayer player = context.getSource().getPlayer();
         if (player == null) {
-            context.getSource().sendFailure(i18n("command.modid.agent.chat.ask.player_only", FB_ASK_PLAYER_ONLY));
+            context.getSource().sendFailure(AgentMessaging.i18n(context.getSource(),"command.modid.agent.chat.ask.player_only", FB_ASK_PLAYER_ONLY));
             return 0;
         }
 
@@ -340,7 +340,7 @@ public class Recordbot {
     private static int handleSearchCommand(CommandContext<CommandSourceStack> context) {
         ServerPlayer player = context.getSource().getPlayer();
         if (player == null) {
-            context.getSource().sendFailure(i18n("command.modid.agent.chat.ask.player_only", FB_ASK_PLAYER_ONLY));
+            context.getSource().sendFailure(AgentMessaging.i18n(context.getSource(),"command.modid.agent.chat.ask.player_only", FB_ASK_PLAYER_ONLY));
             return 0;
         }
 
@@ -352,21 +352,16 @@ public class Recordbot {
     private static int handleNewCommand(CommandContext<CommandSourceStack> context) {
         ServerPlayer player = context.getSource().getPlayer();
         if (player == null) {
-            context.getSource().sendFailure(i18n("command.modid.agent.chat.ask.player_only", FB_ASK_PLAYER_ONLY));
+            context.getSource().sendFailure(AgentMessaging.i18n(context.getSource(),"command.modid.agent.chat.ask.player_only", FB_ASK_PLAYER_ONLY));
             return 0;
         }
         Agent.resetConversation(player);
         CommandSourceFeedback.sendSuccess(
                 context.getSource(),
-                i18n("command.modid.agent.chat.new.success", FB_NEW_SUCCESS),
+                AgentMessaging.i18n(context.getSource(),"command.modid.agent.chat.new.success", FB_NEW_SUCCESS),
                 false
         );
         return 1;
-    }
-
-    @SuppressWarnings("unused")
-    private static Component i18n(String key, String fallback, Object... args) {
-        return Component.translatable(key, args);
     }
 
     private static Path getDataFile(MinecraftServer server) throws IOException {
@@ -378,9 +373,15 @@ public class Recordbot {
             return dataFile;
         }
 
-        Path legacyAgentsDataFile = dataDir.getParent() != null
-                ? dataDir.getParent().resolve("agentsdata").resolve(RECORD_FILE_NAME)
-                : dataDir.resolveSibling("agentsdata").resolve(RECORD_FILE_NAME);
+        Path serverRoot = AgentConfigLoader.getServerRootDirectory(server);
+        Path legacyRootMacagent = serverRoot.resolve(AgentConstants.DATA_DIR_NAME).resolve(RECORD_FILE_NAME);
+        if (Files.exists(legacyRootMacagent)) {
+            Files.copy(legacyRootMacagent, dataFile, StandardCopyOption.REPLACE_EXISTING);
+            MCAgentsMod.LOGGER.info("Migrated agent records from {} to {}", legacyRootMacagent.toAbsolutePath(), dataFile.toAbsolutePath());
+            return dataFile;
+        }
+
+        Path legacyAgentsDataFile = serverRoot.resolve("agentsdata").resolve(RECORD_FILE_NAME);
         if (Files.exists(legacyAgentsDataFile)) {
             Files.copy(legacyAgentsDataFile, dataFile, StandardCopyOption.REPLACE_EXISTING);
             return dataFile;

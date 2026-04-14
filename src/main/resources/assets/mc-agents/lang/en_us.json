@@ -21,6 +21,7 @@
   "command.modid.agent.chat.api_key.missing": "API key is missing. Please edit api_key in %s",
   "command.modid.agent.chat.requesting": "[%s] thinking...",
   "command.modid.agent.chat.compound_split": "[%s] Split into %s sub-tasks; running in order.",
+  "command.modid.agent.chat.compound_list_header": "[%s] Sub-task list:",
   "command.modid.agent.chat.compound_progress": "[%s] Sub-task %s/%s…",
   "command.modid.agent.chat.task.done": "[%s] Conversation completed",
   "command.modid.agent.chat.reply": "┌─ %s\n└─ %s",

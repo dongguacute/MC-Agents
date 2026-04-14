@@ -5,14 +5,13 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mcagents.input.Agent;
+import com.mcagents.input.AgentMessaging;
 import com.mcagents.util.CommandSourceFeedback;
 import com.mcagents.util.CommandSourcePermissions;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
-import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -78,13 +77,13 @@ public class Startbot {
         } else if ("leave".equalsIgnoreCase(action)) {
             subCommand = "kill";
         } else {
-            source.sendFailure(i18n("command.modid.agent.control.action.invalid", "未知操作，仅支持 join / leave"));
+            source.sendFailure(AgentMessaging.i18n(source,"command.modid.agent.control.action.invalid", "未知操作，仅支持 join / leave"));
             return 0;
         }
 
         RateLimitResult rateLimitResult = checkAndRecordRateLimit(source);
         if (!rateLimitResult.allowed()) {
-            source.sendFailure(i18n(
+            source.sendFailure(AgentMessaging.i18n(source,
                     "command.modid.agent.control.rate_limited",
                     "请求过于频繁：%s 秒内最多 %s 次控制请求，请在 %s 秒后重试",
                     rateLimitResult.windowSeconds(),
@@ -102,7 +101,7 @@ public class Startbot {
         MinecraftServer server = source.getServer();
         ConflictCheckResult conflictCheck = filterConflictingTargets(source, action, targetBotNames);
         if (!conflictCheck.conflictingBots().isEmpty()) {
-            source.sendFailure(i18n(
+            source.sendFailure(AgentMessaging.i18n(source,
                     "command.modid.agent.control.conflict.detected",
                     "检测到冲突指令，已跳过 bot: %s。最近由 %s 执行了 %s 指令，请稍后重试",
                     String.join(", ", conflictCheck.conflictingBots()),
@@ -130,18 +129,18 @@ public class Startbot {
                 }
             } catch (CommandSyntaxException e) {
                 failedBots.add(botName);
-                source.sendFailure(i18n("command.modid.agent.control.command.syntax_error", "Carpet 命令语法/上下文错误: /%s，%s", carpetCommand, e.getMessage()));
+                source.sendFailure(AgentMessaging.i18n(source,"command.modid.agent.control.command.syntax_error", "Carpet 命令语法/上下文错误: /%s，%s", carpetCommand, e.getMessage()));
             } catch (Exception e) {
                 failedBots.add(botName);
-                source.sendFailure(i18n("command.modid.agent.control.command.failed", "执行 Carpet 命令失败: /%s，%s", carpetCommand, e.getMessage()));
+                source.sendFailure(AgentMessaging.i18n(source,"command.modid.agent.control.command.failed", "执行 Carpet 命令失败: /%s，%s", carpetCommand, e.getMessage()));
             }
         }
         markRecentDirective(source, action, conflictCheck.executableBots());
 
         int finalSuccessCount = successCount;
-        CommandSourceFeedback.sendSuccess(source, i18n("command.modid.agent.control.batch.result", "批量执行完成：成功 %s 个，失败 %s 个", finalSuccessCount, failedBots.size()), true);
+        CommandSourceFeedback.sendSuccess(source, AgentMessaging.i18n(source,"command.modid.agent.control.batch.result", "批量执行完成：成功 %s 个，失败 %s 个", finalSuccessCount, failedBots.size()), true);
         if (!failedBots.isEmpty()) {
-            source.sendFailure(i18n("command.modid.agent.control.batch.failed_bots", "失败 bot: %s", String.join(", ", failedBots)));
+            source.sendFailure(AgentMessaging.i18n(source,"command.modid.agent.control.batch.failed_bots", "失败 bot: %s", String.join(", ", failedBots)));
         }
         return successCount > 0 ? 1 : 0;
     }
@@ -152,7 +151,7 @@ public class Startbot {
 
     private static List<String> resolveBotTargets(CommandSourceStack source, String input) {
         if (input == null || input.isBlank()) {
-            source.sendFailure(i18n("command.modid.agent.control.target.empty", "请输入 bot 名称或已记录的 tag"));
+            source.sendFailure(AgentMessaging.i18n(source,"command.modid.agent.control.target.empty", "请输入 bot 名称或已记录的 tag"));
             return null;
         }
         String normalizedInput = input.trim();
@@ -162,7 +161,7 @@ public class Startbot {
         try {
             recordFile = getRecordFile(source.getServer());
             JsonArray records = readRecords(recordFile);
-            CommandSourceFeedback.sendSuccess(source, i18n("command.modid.agent.control.records.loaded", "已读取存储库: %s，记录数 %s", recordFile.toAbsolutePath().toString(), records.size()), false);
+            CommandSourceFeedback.sendSuccess(source, AgentMessaging.i18n(source,"command.modid.agent.control.records.loaded", "已读取存储库: %s，记录数 %s", recordFile.toAbsolutePath().toString(), records.size()), false);
             for (JsonElement element : records) {
                 if (!element.isJsonObject()) {
                     continue;
@@ -181,12 +180,12 @@ public class Startbot {
                 }
             }
         } catch (IOException e) {
-            source.sendFailure(i18n("command.modid.agent.control.records.load_failed", "读取存储库失败: %s", e.getMessage()));
+            source.sendFailure(AgentMessaging.i18n(source,"command.modid.agent.control.records.load_failed", "读取存储库失败: %s", e.getMessage()));
             return null;
         }
 
         if (!matchedBots.isEmpty()) {
-            CommandSourceFeedback.sendSuccess(source, i18n("command.modid.agent.control.tag.matched", "tag 命中 bot: %s", String.join(", ", matchedBots)), false);
+            CommandSourceFeedback.sendSuccess(source, AgentMessaging.i18n(source,"command.modid.agent.control.tag.matched", "tag 命中 bot: %s", String.join(", ", matchedBots)), false);
             return matchedBots;
         }
 
@@ -196,7 +195,7 @@ public class Startbot {
             return single;
         }
 
-        source.sendFailure(i18n("command.modid.agent.control.target.not_found_or_invalid", "未找到该 tag 对应的 bot，且输入也不是合法 bot_name（3-16 位字母/数字/下划线）"));
+        source.sendFailure(AgentMessaging.i18n(source,"command.modid.agent.control.target.not_found_or_invalid", "未找到该 tag 对应的 bot，且输入也不是合法 bot_name（3-16 位字母/数字/下划线）"));
         return null;
     }
 
@@ -219,11 +218,6 @@ public class Startbot {
         } catch (Exception ignored) {
             return new JsonArray();
         }
-    }
-
-    @SuppressWarnings("unused")
-    private static MutableComponent i18n(String key, String fallback, Object... args) {
-        return Component.translatable(key, args);
     }
 
     private static CommandSourceStack createAgentSourceFromPlayer(ServerPlayer player) {

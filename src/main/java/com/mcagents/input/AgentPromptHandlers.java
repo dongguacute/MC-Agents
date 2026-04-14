@@ -104,7 +104,7 @@ final class AgentPromptHandlers {
         }
         AgentMessaging.sendToMainThread(
                 player,
-                AgentMessaging.i18n("command.modid.agent.wiki.keyword_extracting", "[%s] 正在分析并提取 Wiki 检索关键词…", AgentConstants.AGENT_DISPLAY_NAME).withStyle(ChatFormatting.DARK_GRAY)
+                AgentMessaging.i18n(player,"command.modid.agent.wiki.keyword_extracting", "[%s] 正在分析并提取 Wiki 检索关键词…", AgentConstants.AGENT_DISPLAY_NAME).withStyle(ChatFormatting.DARK_GRAY)
         );
         String aiQuery = extractWikiSearchKeywordsWithAi(safePrompt, config);
         String searchQuery = aiQuery.isBlank() ? safePrompt.trim() : aiQuery;
@@ -113,7 +113,7 @@ final class AgentPromptHandlers {
         }
         AgentMessaging.sendToMainThread(
                 player,
-                AgentMessaging.i18n(
+                AgentMessaging.i18n(player,
                         "command.modid.agent.wiki.searching_with_query",
                         "[%s] 正在搜索 Minecraft Wiki：%s",
                         AgentConstants.AGENT_DISPLAY_NAME,
@@ -199,7 +199,7 @@ final class AgentPromptHandlers {
                 if (root instanceof AgentUserException agentError) {
                     AgentMessaging.sendToMainThread(player, agentError.toComponent().withStyle(ChatFormatting.RED));
                 } else {
-                    AgentMessaging.sendToMainThread(player, AgentMessaging.i18n("command.modid.agent.chat.request.failed.unknown", "AI 请求失败：未知错误").withStyle(ChatFormatting.RED));
+                    AgentMessaging.sendToMainThread(player, AgentMessaging.i18n(player,"command.modid.agent.chat.request.failed.unknown", "AI 请求失败：未知错误").withStyle(ChatFormatting.RED));
                 }
                 return null;
             });
@@ -283,7 +283,7 @@ final class AgentPromptHandlers {
             if (!showThinking.isBlank()) {
                 AgentMessaging.sendToMainThread(
                         player,
-                        AgentMessaging.i18n("command.modid.agent.chat.thinking", "│ %s 思考: %s", AgentConstants.AGENT_DISPLAY_NAME, showThinking).withStyle(ChatFormatting.DARK_GRAY)
+                        AgentMessaging.i18n(player,"command.modid.agent.chat.thinking", "│ %s 思考: %s", AgentConstants.AGENT_DISPLAY_NAME, showThinking).withStyle(ChatFormatting.DARK_GRAY)
                 );
             }
         }
@@ -299,7 +299,7 @@ final class AgentPromptHandlers {
         }
         AgentMessaging.sendToMainThread(
                 player,
-                AgentMessaging.i18n("command.modid.agent.chat.reply", "┌─ %s\n└─ %s", AgentConstants.AGENT_DISPLAY_NAME, displayReply).withStyle(ChatFormatting.AQUA)
+                AgentMessaging.i18n(player,"command.modid.agent.chat.reply", "┌─ %s\n└─ %s", AgentConstants.AGENT_DISPLAY_NAME, displayReply).withStyle(ChatFormatting.AQUA)
         );
 
         ContextStatus contextStatus = getConversationState(player).commitTurn(prompt, replyForCommit, requestVersion, maxContextTokens, systemTokens);
@@ -317,7 +317,7 @@ final class AgentPromptHandlers {
         if (maxContextTokens <= 0) {
             AgentMessaging.sendToMainThread(
                     player,
-                    AgentMessaging.i18n(
+                    AgentMessaging.i18n(player,
                             "command.modid.agent.chat.context.remaining.unknown",
                             "[%s] 上下文剩余: unkown",
                             AgentConstants.AGENT_DISPLAY_NAME
@@ -333,7 +333,7 @@ final class AgentPromptHandlers {
         if (remainingTokens <= 0 || contextStatus.full()) {
             AgentMessaging.sendToMainThread(
                     player,
-                    AgentMessaging.i18n(
+                    AgentMessaging.i18n(player,
                             "command.modid.agent.chat.context.remaining.full",
                             "[%s] 上下文进度 %s 已用 %s%%（%s/%s tokens）；剩余 %s tokens（已满，请使用 /agent new 新建对话）",
                             AgentConstants.AGENT_DISPLAY_NAME,
@@ -348,7 +348,7 @@ final class AgentPromptHandlers {
         }
         AgentMessaging.sendToMainThread(
                 player,
-                AgentMessaging.i18n(
+                AgentMessaging.i18n(player,
                         "command.modid.agent.chat.context.remaining",
                         "[%s] 上下文进度 %s 已用 %s%%（%s/%s tokens）；剩余 %s tokens",
                         AgentConstants.AGENT_DISPLAY_NAME,
@@ -364,7 +364,7 @@ final class AgentPromptHandlers {
     private static void sendTaskDoneMessage(ServerPlayer player) {
         AgentMessaging.sendToMainThread(
                 player,
-                AgentMessaging.i18n("command.modid.agent.chat.task.done", "[%s] 对话完成", AgentConstants.AGENT_DISPLAY_NAME).withStyle(ChatFormatting.GREEN)
+                AgentMessaging.i18n(player,"command.modid.agent.chat.task.done", "[%s] 对话完成", AgentConstants.AGENT_DISPLAY_NAME).withStyle(ChatFormatting.GREEN)
         );
     }
 
@@ -392,7 +392,7 @@ final class AgentPromptHandlers {
     }
 
     static ConversationPrepareResult prepareConversation(ServerPlayer player, String prompt, int maxContextTokens, String systemPrompt) {
-        return getConversationState(player).prepareRequest(prompt, maxContextTokens, systemPrompt);
+        return getConversationState(player).prepareRequest(player, prompt, maxContextTokens, systemPrompt);
     }
 
     static ConversationState getConversationState(ServerPlayer player) {
@@ -428,7 +428,7 @@ final class AgentPromptHandlers {
 
         AgentMessaging.sendToMainThread(
                 player,
-                AgentMessaging.i18n(
+                AgentMessaging.i18n(player,
                         "command.modid.agent.wiki.followup",
                         "[%s] 按模型请求检索 Minecraft Wiki…",
                         AgentConstants.AGENT_DISPLAY_NAME

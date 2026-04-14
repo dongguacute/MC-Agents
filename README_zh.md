@@ -56,9 +56,9 @@
 
 模组会从**世界目录**向上查找，直到出现 `server.properties` 或 `eula.txt`，将该目录视为**服务端根目录**。配置文件固定为：
 
-**`<服务端根目录>/macagent.txt`**
+**`<服务端根目录>/config/macagent.txt`**
 
-（与常见独立服务端中 `server.properties` 所在目录一致。）
+（与常见 Fabric 模组配置目录一致；开发环境下若游戏目录为项目下的 `run/`，则对应 `run/config/macagent.txt`。）
 
 ### 格式
 
@@ -79,7 +79,7 @@
 
 ### 旧版路径迁移
 
-若服务端根目录下尚无 `macagent.txt`，但旧路径已存在配置（例如 `agentsdata/`、世界旁目录、世界目录内等），模组可能**自动复制**到上述新位置。发生迁移时日志会出现 `Migrated config file from …`。
+若 `config/macagent.txt` 尚不存在，但旧路径已存在配置（例如**根目录**下的 `macagent.txt`、`agentsdata/`、世界旁目录、世界目录内等），模组可能**自动复制**到上述新位置。发生迁移时日志会出现 `Migrated config file from …`。
 
 ### 生效方式
 
@@ -92,9 +92,9 @@
 ## 系统提示词与假人记录
 
 - **控制假人等行为**由 **`src/main/java/com/mcagents/prompt/ControlBot.md`** 定义（从服务端工作目录加载：模组会从世界目录向上查找该相对路径）。
-- **假人名称 ↔ 标签** 映射保存在 **`macagent/agent_records.json`**（JSON 数组，元素为 `{ "bot_name", "tag" }`）。AI 在系统提示中会收到该库的截断副本，用于决定 join/leave。
+- **假人名称 ↔ 标签** 映射保存在 **`config/macagent/agent_records.json`**（JSON 数组，元素为 `{ "bot_name", "tag" }`）。AI 在系统提示中会收到该库的截断副本，用于决定 join/leave。
 
-旧版路径可能自动迁移（如 `agentsdata`、世界 `data/` 等），详见 `Agent.java` / `Recordbot.java`。
+旧版路径可能自动迁移（如根目录下的 `macagent/`、`agentsdata`、世界 `data/` 等），详见 `AgentConfigLoader` / `Recordbot`。
 
 ---
 
@@ -132,9 +132,10 @@
 
 ```
 <服务端根目录>/
-  macagent.txt              # API 配置
-  macagent/
-    agent_records.json      # bot_name / tag 记录
+  config/
+    macagent.txt            # API 配置
+    macagent/
+      agent_records.json    # bot_name / tag 记录
 ```
 
 ---

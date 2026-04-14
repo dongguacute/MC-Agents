@@ -1,6 +1,7 @@
 package com.mcagents;
 
 import com.mcagents.input.Agent;
+import com.mcagents.input.AgentLang;
 import com.mcagents.input.Recordbot;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -22,6 +23,7 @@ public class MCAgentsMod implements ModInitializer {
 		// However, some things (like resources) may still be uninitialized.
 		// Proceed with mild caution.
 
+		AgentLang.init();
 		Recordbot.register();
 		ServerLifecycleEvents.SERVER_STARTED.register(Agent::initializeConfig);
 		LOGGER.info("MC-Agents initialized.");

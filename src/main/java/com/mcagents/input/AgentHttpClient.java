@@ -3,20 +3,30 @@ package com.mcagents.input;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
+import com.openai.client.OpenAIClient;
+import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.core.RequestOptions;
+import com.openai.core.http.StreamResponse;
+import com.openai.errors.OpenAIException;
+import com.openai.errors.OpenAIServiceException;
+import com.openai.models.chat.completions.ChatCompletion;
+import com.openai.models.chat.completions.ChatCompletionChunk;
+import com.openai.models.chat.completions.ChatCompletionCreateParams;
+import com.openai.models.chat.completions.ChatCompletionMessage;
 import net.minecraft.server.level.ServerPlayer;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Locale;
+import java.util.Map;
 
 /**
- * OpenAI 兼容 API 的流式与非流式调用。
+ * 通过 OpenAI 官方 Java SDK 调用 Chat Completions（流式与非流式），自定义 baseUrl 时兼容各类 OpenAI 兼容 API。
  */
 final class AgentHttpClient {
+    private static final Object CLIENT_LOCK = new Object();
+    private static volatile String cachedClientKey = "";
+    private static volatile OpenAIClient cachedClient;
+
     static ApiResult callOpenAICompatibleApi(ServerPlayer player, JsonArray requestMessages, AgentConfig currentConfig) {
         try {
             return callOpenAICompatibleApiStreaming(requestMessages, currentConfig);
@@ -30,161 +40,128 @@ final class AgentHttpClient {
 
     static ApiResult callOpenAICompatibleApiFallback(JsonArray requestMessages, AgentConfig currentConfig) {
         try {
-            JsonObject requestBody = buildRequestBody(requestMessages, currentConfig.model(), false);
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(currentConfig.apiUrl()))
+            OpenAIClient client = clientFor(currentConfig);
+            ChatCompletionCreateParams params = buildChatParams(requestMessages, currentConfig.model());
+            RequestOptions requestOptions = RequestOptions.builder()
                     .timeout(Duration.ofSeconds(60))
-                    .header("Authorization", "Bearer " + currentConfig.apiKey())
-                    .header("Content-Type", "application/json; charset=utf-8")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody.toString(), StandardCharsets.UTF_8))
                     .build();
-
-            HttpResponse<String> response = AgentState.HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw AgentUserException.httpStatus(response.statusCode());
-            }
-
-            JsonObject result = JsonParser.parseString(response.body()).getAsJsonObject();
-            JsonArray choices = result.getAsJsonArray("choices");
-            if (choices == null || choices.isEmpty()) {
+            ChatCompletion result = client.chat().completions().create(params, requestOptions);
+            if (result.choices() == null || result.choices().isEmpty()) {
                 throw new AgentUserException("command.modid.agent.chat.request.failed.invalid_choices");
             }
-
-            JsonObject firstChoice = choices.get(0).getAsJsonObject();
-            JsonObject message = firstChoice.getAsJsonObject("message");
+            ChatCompletionMessage message = result.choices().get(0).message();
             if (message == null) {
                 throw new AgentUserException("command.modid.agent.chat.request.failed.invalid_message");
             }
-
-            String content = extractText(message.get("content")).trim();
+            String content = message.content().map(String::trim).orElse("");
+            if (content.isEmpty()) {
+                content = extractTextFromMessageExtras(message);
+            }
             if (content.isEmpty()) {
                 throw new AgentUserException("command.modid.agent.chat.request.failed.empty");
             }
-            Integer totalTokens = readUsageTotalTokens(result);
+            Integer totalTokens = result.usage().map(u -> (int) Math.min(u.totalTokens(), Integer.MAX_VALUE)).orElse(null);
             return new ApiResult(content, totalTokens, "");
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
+        } catch (AgentUserException e) {
+            throw e;
+        } catch (OpenAIServiceException e) {
+            throw AgentUserException.httpStatus(e.statusCode());
+        } catch (OpenAIException e) {
             throw new AgentUserException("command.modid.agent.chat.request.failed.network", e.getMessage() == null ? "" : e.getMessage());
         }
     }
 
     private static ApiResult callOpenAICompatibleApiStreaming(JsonArray requestMessages, AgentConfig currentConfig) {
         try {
-            JsonObject requestBody = buildRequestBody(requestMessages, currentConfig.model(), true);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(currentConfig.apiUrl()))
+            OpenAIClient client = clientFor(currentConfig);
+            ChatCompletionCreateParams params = buildChatParams(requestMessages, currentConfig.model());
+            RequestOptions requestOptions = RequestOptions.builder()
                     .timeout(Duration.ofSeconds(60))
-                    .header("Authorization", "Bearer " + currentConfig.apiKey())
-                    .header("Content-Type", "application/json; charset=utf-8")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody.toString(), StandardCharsets.UTF_8))
                     .build();
-
-            HttpResponse<java.util.stream.Stream<String>> response = AgentState.HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofLines());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw AgentUserException.httpStatus(response.statusCode());
-            }
-
             AgentStreamState streamState = new AgentStreamState();
-            StringBuilder eventData = new StringBuilder();
-
-            try (java.util.stream.Stream<String> lines = response.body()) {
-                java.util.Iterator<String> iterator = lines.iterator();
-                while (iterator.hasNext()) {
-                    String line = iterator.next();
-                    if (line == null) {
-                        continue;
-                    }
-
-                    String trimmed = line.trim();
-                    if (trimmed.isEmpty()) {
-                        if (consumeEventData(eventData, streamState)) {
-                            break;
-                        }
-                        continue;
-                    }
-
-                    if (trimmed.startsWith("data:")) {
-                        if (eventData.length() > 0) {
-                            eventData.append('\n');
-                        }
-                        eventData.append(trimmed.substring(5).trim());
-                    }
-                }
+            try (StreamResponse<ChatCompletionChunk> streamResponse = client.chat().completions().createStreaming(params, requestOptions)) {
+                streamResponse.stream().forEach(chunk -> accumulateStreamChunk(chunk, streamState));
             }
-
-            consumeEventData(eventData, streamState);
             streamState.flushPending(true);
             String finalAnswer = streamState.answerText.toString().trim();
             if (finalAnswer.isEmpty()) {
                 throw new AgentUserException("command.modid.agent.chat.request.failed.empty");
             }
             return new ApiResult(finalAnswer, streamState.totalTokens, streamState.thinkingText.toString());
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
+        } catch (AgentUserException e) {
+            throw e;
+        } catch (OpenAIServiceException e) {
+            throw AgentUserException.httpStatus(e.statusCode());
+        } catch (OpenAIException e) {
             throw new AgentUserException("command.modid.agent.chat.request.failed.network", e.getMessage() == null ? "" : e.getMessage());
         }
     }
 
-    private static JsonObject buildRequestBody(JsonArray messages, String model, boolean stream) {
-        JsonObject requestBody = new JsonObject();
-        requestBody.addProperty("model", model);
-        requestBody.addProperty("stream", stream);
-        requestBody.add("messages", messages);
-        return requestBody;
+    private static void accumulateStreamChunk(ChatCompletionChunk chunk, AgentStreamState streamState) {
+        if (chunk.usage().isPresent()) {
+            long total = chunk.usage().get().totalTokens();
+            streamState.totalTokens = (int) Math.min(total, Integer.MAX_VALUE);
+        }
+        if (chunk.choices() == null || chunk.choices().isEmpty()) {
+            return;
+        }
+        ChatCompletionChunk.Choice first = chunk.choices().get(0);
+        ChatCompletionChunk.Choice.Delta delta = first.delta();
+        if (delta != null) {
+            String answer = delta.content().orElse("");
+            String reasoning = extraReasoningFromDelta(delta);
+            appendChunkParts(streamState, reasoning, answer);
+        }
     }
 
-    private static boolean consumeEventData(StringBuilder eventData, AgentStreamState streamState) {
-        if (eventData.length() == 0) {
-            return false;
+    private static String extraReasoningFromDelta(ChatCompletionChunk.Choice.Delta delta) {
+        Map<String, com.openai.core.JsonValue> extra = delta._additionalProperties();
+        if (extra == null || extra.isEmpty()) {
+            return "";
         }
-        String payload = eventData.toString().trim();
-        eventData.setLength(0);
+        StringBuilder sb = new StringBuilder();
+        for (String key : new String[]{"reasoning_content", "reasoning", "thinking"}) {
+            com.openai.core.JsonValue jv = extra.get(key);
+            if (jv != null) {
+                sb.append(jsonValueToPlainString(jv));
+            }
+        }
+        return sb.toString();
+    }
 
-        if (payload.isEmpty()) {
-            return false;
+    private static String jsonValueToPlainString(com.openai.core.JsonValue v) {
+        if (v == null) {
+            return "";
         }
-        if ("[DONE]".equals(payload)) {
-            return true;
-        }
-
         try {
-            JsonObject chunk = JsonParser.parseString(payload).getAsJsonObject();
-            Integer totalTokens = readUsageTotalTokens(chunk);
-            if (totalTokens != null) {
-                streamState.totalTokens = totalTokens;
-            }
-            JsonArray choices = chunk.getAsJsonArray("choices");
-            if (choices == null || choices.isEmpty()) {
-                return false;
-            }
-
-            JsonObject firstChoice = choices.get(0).getAsJsonObject();
-            JsonObject delta = firstChoice.has("delta") ? firstChoice.getAsJsonObject("delta") : null;
-            JsonObject message = firstChoice.has("message") ? firstChoice.getAsJsonObject("message") : null;
-
-            if (delta != null) {
-                appendChunk(streamState, delta);
-            } else if (message != null) {
-                appendChunk(streamState, message);
-            }
-            return false;
-        } catch (Exception e) {
-            // 忽略无法解析的片段，继续处理后续流。
-            return false;
+            String s = v.convert(String.class);
+            return s == null ? "" : s;
+        } catch (Exception ignored) {
+        }
+        try {
+            Object o = v.convert(Object.class);
+            return o == null ? "" : String.valueOf(o);
+        } catch (Exception ignored) {
+            return "";
         }
     }
 
-    private static void appendChunk(AgentStreamState streamState, JsonObject source) {
-        String reasoningText = extractText(source.get("reasoning_content"))
-                + extractText(source.get("reasoning"))
-                + extractText(source.get("thinking"));
-        String answerText = extractText(source.get("content"));
+    private static String extractTextFromMessageExtras(ChatCompletionMessage message) {
+        Map<String, com.openai.core.JsonValue> extra = message._additionalProperties();
+        if (extra == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String key : new String[]{"reasoning_content", "reasoning", "thinking", "content"}) {
+            com.openai.core.JsonValue jv = extra.get(key);
+            if (jv != null) {
+                sb.append(jsonValueToPlainString(jv));
+            }
+        }
+        return sb.toString().trim();
+    }
 
+    private static void appendChunkParts(AgentStreamState streamState, String reasoningText, String answerText) {
         String safeReasoning = AgentSanitize.sanitizeThinkingForDisplay(reasoningText);
         if (!safeReasoning.isEmpty()) {
             streamState.thinkingPending.append(safeReasoning);
@@ -194,8 +171,64 @@ final class AgentHttpClient {
             streamState.answerPending.append(answerText);
             streamState.answerText.append(answerText);
         }
-
         streamState.flushPending(false);
+    }
+
+    private static ChatCompletionCreateParams buildChatParams(JsonArray messages, String model) {
+        ChatCompletionCreateParams.Builder builder = ChatCompletionCreateParams.builder().model(model);
+        for (JsonElement el : messages) {
+            if (el == null || !el.isJsonObject()) {
+                continue;
+            }
+            JsonObject o = el.getAsJsonObject();
+            String role = o.has("role") ? o.get("role").getAsString() : "user";
+            String content = extractText(o.get("content"));
+            String r = role.toLowerCase(Locale.ROOT);
+            switch (r) {
+                case "system" -> builder.addSystemMessage(content);
+                case "developer" -> builder.addDeveloperMessage(content);
+                case "assistant" -> builder.addAssistantMessage(content);
+                case "user" -> builder.addUserMessage(content);
+                default -> builder.addUserMessage(content);
+            }
+        }
+        return builder.build();
+    }
+
+    private static String normalizeOpenAIBaseUrl(String apiUrl) {
+        String u = apiUrl == null ? "" : apiUrl.trim();
+        if (u.isEmpty()) {
+            return "https://api.openai.com/v1";
+        }
+        String lower = u.toLowerCase(Locale.ROOT);
+        String suffix = "/chat/completions";
+        if (lower.endsWith(suffix)) {
+            u = u.substring(0, u.length() - suffix.length());
+        }
+        while (u.endsWith("/")) {
+            u = u.substring(0, u.length() - 1);
+        }
+        return u.isEmpty() ? "https://api.openai.com/v1" : u;
+    }
+
+    private static OpenAIClient clientFor(AgentConfig config) {
+        String base = normalizeOpenAIBaseUrl(config.apiUrl());
+        String key = base + '\0' + config.apiKey();
+        if (key.equals(cachedClientKey) && cachedClient != null) {
+            return cachedClient;
+        }
+        synchronized (CLIENT_LOCK) {
+            if (key.equals(cachedClientKey) && cachedClient != null) {
+                return cachedClient;
+            }
+            cachedClientKey = key;
+            cachedClient = OpenAIOkHttpClient.builder()
+                    .baseUrl(base)
+                    .apiKey(config.apiKey())
+                    .streamHandlerExecutor(AgentState.HTTP_EXECUTOR)
+                    .build();
+            return cachedClient;
+        }
     }
 
     static String extractText(JsonElement element) {
@@ -228,21 +261,6 @@ final class AgentHttpClient {
             }
         }
         return "";
-    }
-
-    static Integer readUsageTotalTokens(JsonObject object) {
-        if (object == null || !object.has("usage") || !object.get("usage").isJsonObject()) {
-            return null;
-        }
-        JsonObject usage = object.getAsJsonObject("usage");
-        if (!usage.has("total_tokens")) {
-            return null;
-        }
-        try {
-            return usage.get("total_tokens").getAsInt();
-        } catch (Exception ignored) {
-            return null;
-        }
     }
 
     private AgentHttpClient() {

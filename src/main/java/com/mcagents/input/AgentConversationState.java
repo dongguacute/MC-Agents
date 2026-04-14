@@ -2,6 +2,7 @@ package com.mcagents.input;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import net.minecraft.server.level.ServerPlayer;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -14,7 +15,7 @@ final class ConversationState {
     private int usedTokens = 0;
     private long version = 0L;
 
-    synchronized ConversationPrepareResult prepareRequest(String prompt, int maxContextTokens, String systemPrompt) {
+    synchronized ConversationPrepareResult prepareRequest(ServerPlayer player, String prompt, int maxContextTokens, String systemPrompt) {
         if (maxContextTokens <= 0) {
             JsonArray payloadMessages = new JsonArray();
             JsonObject systemMessage = new JsonObject();
@@ -41,6 +42,7 @@ final class ConversationState {
                     version,
                     systemTokens,
                     AgentMessaging.i18n(
+                            player,
                             "command.modid.agent.chat.context.full",
                             "[%s] 上下文已满，请先执行 /agent new 新建对话。",
                             AgentConstants.AGENT_DISPLAY_NAME
@@ -57,6 +59,7 @@ final class ConversationState {
                     version,
                     systemTokens,
                     AgentMessaging.i18n(
+                            player,
                             "command.modid.agent.chat.context.not_enough",
                             "[%s] 当前剩余上下文为 %s tokens，本次输入预计需要 %s tokens。请执行 /agent new 新建对话。",
                             AgentConstants.AGENT_DISPLAY_NAME,

@@ -7,6 +7,8 @@ import java.util.regex.Pattern;
  */
 final class AgentConstants {
     static final String AGENT_DISPLAY_NAME = "MCAGENT";
+    /** 与 Fabric 惯例一致：模组配置与数据放在服务端根目录下的 {@code config/} 内。 */
+    static final String CONFIG_DIR_NAME = "config";
     static final String DATA_DIR_NAME = "macagent";
     static final String RECORD_FILE_NAME = "agent_records.json";
     static final String CONFIG_FILE_NAME = "macagent.txt";
