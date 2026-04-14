@@ -122,7 +122,7 @@ jobs:
           shopt -s nullglob
           files=(dist/"${MOD_ID}"-*.jar)
           [[ ${#files[@]} -gt 0 ]] || { echo "No dist/${MOD_ID}-*.jar to upload" >&2; exit 1; }
-          gh release upload "$tag" "${files[@]}" --clobber
+          gh release upload "$tag" "${files[@]}" --clobber -R "${{ github.repository }}"
       - name: capture build artifacts
         uses: actions/upload-artifact@v7
         with:
