@@ -61,13 +61,13 @@ public class Agent {
     /** 资料类 ask 第一轮：模型仅输出一行 WIKI_QUERY: … 供 MediaWiki 搜索 */
     private static final Pattern WIKI_QUERY_LINE_PATTERN = Pattern.compile("(?i)^WIKI_QUERY:\\s*(.+)$");
     private static final int MAX_WIKI_SEARCH_QUERY_CHARS = 240;
+    private static final int MAX_WIKI_QUERY_DISPLAY_CHARS = 96;
     private static final String WIKI_KEYWORD_EXTRACTION_SYSTEM = """
-            You extract a short Minecraft Wiki search query for MediaWiki (minecraft.wiki / zh.minecraft.wiki).
-            Output EXACTLY one line. No quotes, no markdown, no explanation.
-            Format: WIKI_QUERY: <2–10 words: English or Chinese terms that match likely article titles (e.g. Ender Dragon, 铁傀儡, redstone repeater)>
+            You help search Minecraft Wiki (minecraft.wiki / zh.minecraft.wiki) via MediaWiki.
+            First read the user's message, identify the main topic, then output the best 2–10 word search terms that match likely article titles.
+            Output EXACTLY one line. No quotes, no markdown, no explanation, no other text.
+            Format: WIKI_QUERY: <English or Chinese terms, e.g. Ender Dragon, 铁傀儡, redstone repeater>
             If the user mixes topics, pick the main one.""";
-    private static final int MAX_WIKI_SEARCH_CHAIN_DEPTH = 5;
-    private static final int MAX_WIKI_SEARCH_DIRECTIVES_PER_REPLY = 3;
     private static final Pattern PROMPT_LEAK_PATTERN = Pattern.compile(
             "(?is)(你是\\s*minecraft\\s*服务器助手|当且仅当用户明确要求控制假人上下线时|\\[control_bot\\]|system\\s*prompt|developer\\s*message|提示词|instruction)"
     );
@@ -165,7 +165,7 @@ public class Agent {
                 player.sendSystemMessage(
                         i18n(
                                 "command.modid.agent.wiki.searching_before_ask",
-                                "[%s] 资料类：先检索 Minecraft Wiki，再生成回答…",
+                                "[%s] 资料类：先由 AI 分析并提取 Wiki 关键词，再检索，最后生成回答…",
                                 AGENT_DISPLAY_NAME
                         ).withStyle(ChatFormatting.DARK_GRAY)
                 );
@@ -185,6 +185,7 @@ public class Agent {
 
         for (int i = 0; i < parts.size(); i++) {
             final String partPrompt = parts.get(i);
+            final int partIndex = i;
             final int taskIndex = i + 1;
             final int taskTotal = parts.size();
             enqueuePlayerAiTask(player, () -> {
@@ -201,14 +202,16 @@ public class Agent {
                     );
                 }
                 if (MinecraftWiki.looksLikeWikiKnowledgeQuestion(partPrompt)) {
-                    sendToMainThread(
-                            player,
-                            i18n(
-                                    "command.modid.agent.wiki.searching_before_ask",
-                                    "[%s] 资料类：先检索 Minecraft Wiki…",
-                                    AGENT_DISPLAY_NAME
-                            ).withStyle(ChatFormatting.DARK_GRAY)
-                    );
+                    if (taskTotal > 1) {
+                        sendToMainThread(
+                                player,
+                                i18n(
+                                        "command.modid.agent.wiki.searching_before_ask.compound",
+                                        "[%s] 资料类：先分析关键词并检索 Wiki，再生成回答…",
+                                        AGENT_DISPLAY_NAME
+                                ).withStyle(ChatFormatting.DARK_GRAY)
+                        );
+                    }
                 } else if (taskTotal > 1) {
                     sendToMainThread(
                             player,
@@ -216,13 +219,32 @@ public class Agent {
                     );
                 }
                 String apiPrompt = buildApiPromptWithWiki(player, partPrompt, currentConfig);
+                if (MinecraftWiki.looksLikeWikiKnowledgeQuestion(partPrompt)) {
+                    sendToMainThread(
+                            player,
+                            i18n(
+                                    "command.modid.agent.wiki.generating_answer",
+                                    "[%s] 正在根据检索结果生成回答…",
+                                    AGENT_DISPLAY_NAME
+                            ).withStyle(ChatFormatting.DARK_GRAY)
+                    );
+                }
                 ConversationPrepareResult prepareResult = prepareConversation(player, apiPrompt, currentConfig.maxContextTokens(), runtimeSystemPrompt);
                 if (!prepareResult.allowed()) {
                     sendToMainThread(player, prepareResult.blockMessage().withStyle(ChatFormatting.YELLOW));
                     return;
                 }
                 ApiResult apiResult = callOpenAICompatibleApi(player, prepareResult.requestMessages(), currentConfig);
-                handleAiReply(player, partPrompt, apiResult, prepareResult.version(), currentConfig.maxContextTokens(), prepareResult.systemTokens());
+                handleAiReply(
+                        player,
+                        partPrompt,
+                        apiResult,
+                        prepareResult.version(),
+                        currentConfig.maxContextTokens(),
+                        prepareResult.systemTokens(),
+                        partIndex,
+                        taskTotal
+                );
             });
         }
     }
@@ -277,19 +299,48 @@ public class Agent {
         }
         String safeQuery = query.trim();
         String runtimeSystemPrompt = buildRuntimeSystemPrompt(player);
-        player.sendSystemMessage(i18n("command.modid.agent.wiki.searching", "[%s] 正在从 Minecraft Wiki 检索…", AGENT_DISPLAY_NAME).withStyle(ChatFormatting.DARK_GRAY));
-        player.sendSystemMessage(i18n("command.modid.agent.chat.requesting", "[%s] 思考中...", AGENT_DISPLAY_NAME).withStyle(ChatFormatting.DARK_GRAY));
 
         enqueuePlayerAiTask(player, () -> {
-            String excerpt = MinecraftWiki.fetchExcerptContext(safeQuery, 4, 8000);
+            sendToMainThread(
+                    player,
+                    i18n(
+                            "command.modid.agent.wiki.keyword_extracting",
+                            "[%s] 正在分析并提取 Wiki 检索关键词…",
+                            AGENT_DISPLAY_NAME
+                    ).withStyle(ChatFormatting.DARK_GRAY)
+            );
+            String aiQuery = extractWikiSearchKeywordsWithAi(safeQuery, currentConfig);
+            String searchQuery = aiQuery.isBlank() ? safeQuery : aiQuery;
+            if (searchQuery.length() > MAX_WIKI_SEARCH_QUERY_CHARS) {
+                searchQuery = searchQuery.substring(0, MAX_WIKI_SEARCH_QUERY_CHARS).trim();
+            }
+            sendToMainThread(
+                    player,
+                    i18n(
+                            "command.modid.agent.wiki.searching_with_query",
+                            "[%s] 正在搜索 Minecraft Wiki：%s",
+                            AGENT_DISPLAY_NAME,
+                            truncateForWikiQueryDisplay(searchQuery)
+                    ).withStyle(ChatFormatting.DARK_GRAY)
+            );
+            String excerpt = MinecraftWiki.fetchExcerptContext(searchQuery, 4, 8000);
             if (excerpt == null || excerpt.isBlank()) {
                 sendToMainThread(player, i18n("command.modid.agent.wiki.empty", "[%s] 未在 Wiki 找到可用摘要，请换关键词重试。", AGENT_DISPLAY_NAME).withStyle(ChatFormatting.RED));
                 return;
             }
+            sendToMainThread(
+                    player,
+                    i18n(
+                            "command.modid.agent.wiki.generating_answer",
+                            "[%s] 正在根据检索结果生成回答…",
+                            AGENT_DISPLAY_NAME
+                    ).withStyle(ChatFormatting.DARK_GRAY)
+            );
             String apiPrompt = "[Minecraft Wiki search · source https://minecraft.wiki/]\n"
-                    + "Search query: " + safeQuery + "\n\n"
-                    + "Summarize the following excerpts concisely in the same language as the search query. "
-                    + "If excerpts are insufficient, say so. Mention that facts come from Minecraft Wiki when appropriate.\n\n"
+                    + "Search query: " + searchQuery + "\n\n"
+                    + "Summarize the following excerpts concisely in the same language as the user's original search input. "
+                    + "If excerpts are insufficient, say so. Mention that facts come from Minecraft Wiki when appropriate. "
+                    + "Do NOT output [MC_WIKI_SEARCH] lines (ignored).\n\n"
                     + excerpt;
             ConversationPrepareResult prepareResult = prepareConversation(player, apiPrompt, currentConfig.maxContextTokens(), runtimeSystemPrompt);
             if (!prepareResult.allowed()) {
@@ -297,12 +348,21 @@ public class Agent {
                 return;
             }
             ApiResult apiResult = callOpenAICompatibleApi(player, prepareResult.requestMessages(), currentConfig);
-            handleAiReply(player, safeQuery, apiResult, prepareResult.version(), currentConfig.maxContextTokens(), prepareResult.systemTokens());
+            handleAiReply(
+                    player,
+                    safeQuery,
+                    apiResult,
+                    prepareResult.version(),
+                    currentConfig.maxContextTokens(),
+                    prepareResult.systemTokens(),
+                    0,
+                    1
+            );
         });
     }
 
     /**
-     * 资料类 ask：① AI 提取检索关键词（独立一轮，不写入对话历史）② Wiki 搜索 ③ 将摘录与用户问题一并交给模型作答。
+     * 资料类 ask：① AI 分析并提取检索关键词（独立一轮，不写入对话历史）② Wiki 搜索 ③ 将摘录与用户问题一并交给模型作答。
      */
     private static String buildApiPromptWithWiki(ServerPlayer player, String safePrompt, AgentConfig config) {
         if (!MinecraftWiki.looksLikeWikiKnowledgeQuestion(safePrompt)) {
@@ -310,27 +370,37 @@ public class Agent {
         }
         sendToMainThread(
                 player,
-                i18n("command.modid.agent.wiki.keyword_extracting", "[%s] 正在提取 Wiki 检索关键词…", AGENT_DISPLAY_NAME).withStyle(ChatFormatting.DARK_GRAY)
+                i18n("command.modid.agent.wiki.keyword_extracting", "[%s] 正在分析并提取 Wiki 检索关键词…", AGENT_DISPLAY_NAME).withStyle(ChatFormatting.DARK_GRAY)
         );
         String aiQuery = extractWikiSearchKeywordsWithAi(safePrompt, config);
         String searchQuery = aiQuery.isBlank() ? safePrompt.trim() : aiQuery;
         if (searchQuery.length() > MAX_WIKI_SEARCH_QUERY_CHARS) {
             searchQuery = searchQuery.substring(0, MAX_WIKI_SEARCH_QUERY_CHARS).trim();
         }
+        sendToMainThread(
+                player,
+                i18n(
+                        "command.modid.agent.wiki.searching_with_query",
+                        "[%s] 正在搜索 Minecraft Wiki：%s",
+                        AGENT_DISPLAY_NAME,
+                        truncateForWikiQueryDisplay(searchQuery)
+                ).withStyle(ChatFormatting.DARK_GRAY)
+        );
         String excerpt = MinecraftWiki.fetchExcerptContext(searchQuery, 3, 6000);
         if (excerpt == null || excerpt.isBlank()) {
             return "[Minecraft Wiki · knowledge question · search completed with no excerpts]\n"
-                    + "Step 1: AI search query was: \"" + searchQuery + "\" (fallback: full user text if extraction failed). "
-                    + "Step 2: Wiki had no usable excerpts. Answer in the user's language; say wiki had no match and avoid inventing stats.\n\n"
+                    + "Step 1 (keyword extraction): AI wiki search query was: \"" + searchQuery + "\" (fallback: full user text if extraction failed). "
+                    + "Step 2 (wiki search): no usable excerpts. Step 3: Answer in the user's language; say wiki had no match and avoid inventing stats.\n"
+                    + "Do NOT output [MC_WIKI_SEARCH] lines (ignored).\n\n"
                     + "---\nUser question:\n"
                     + safePrompt;
         }
         return "[Minecraft Wiki · knowledge question · search completed]\n"
-                + "Step 1: AI-chosen wiki search query: \"" + searchQuery + "\". "
-                + "Step 2: Read excerpts below (EN/zh wiki auto), then answer the user. "
-                + "Base facts on excerpts when applicable; if excerpts miss the answer, say so. Same language as the user.\n\n"
+                + "Step 1: AI analyzed the question and chose wiki search query: \"" + searchQuery + "\". "
+                + "Step 2: Excerpts below are from that wiki search (EN/zh auto). Step 3: Answer ONLY using these excerpts for factual claims; if excerpts miss the answer, say so. Same language as the user.\n"
+                + "Do NOT answer from memory alone for stats/mechanics/recipes. Do NOT output [MC_WIKI_SEARCH] lines (ignored).\n\n"
                 + excerpt
-                + "\n\n---\nUser question (answer after reading excerpts above):\n"
+                + "\n\n---\nUser question (answer only after reading excerpts above):\n"
                 + safePrompt;
     }
 
@@ -396,11 +466,20 @@ public class Agent {
         getConversationState(player).reset();
     }
 
-    private static void handleAiReply(ServerPlayer player, String prompt, ApiResult result, long requestVersion, int maxContextTokens, int systemTokens) {
-        handleAiReply(player, prompt, result, requestVersion, maxContextTokens, systemTokens, 0);
-    }
-
-    private static void handleAiReply(ServerPlayer player, String prompt, ApiResult result, long requestVersion, int maxContextTokens, int systemTokens, int wikiFollowupDepth) {
+    /**
+     * @param compoundPartIndex 复合 ask 中当前子任务下标（从 0 起）；单条 ask 为 0）
+     * @param compoundPartTotal 复合 ask 子任务总数（单条 ask 为 1）
+     */
+    private static void handleAiReply(
+            ServerPlayer player,
+            String prompt,
+            ApiResult result,
+            long requestVersion,
+            int maxContextTokens,
+            int systemTokens,
+            int compoundPartIndex,
+            int compoundPartTotal
+    ) {
         String reply = result.reply();
         boolean hasDirective = hasControlDirective(reply);
         MinecraftServer server = player.getServer();
@@ -424,6 +503,13 @@ public class Agent {
         ContextStatus contextStatus = getConversationState(player).commitTurn(prompt, replyForCommit, requestVersion, maxContextTokens, systemTokens);
         int remainingTokens = contextStatus.remainingTokens();
 
+        boolean taskFullyDone = compoundPartTotal >= 1
+                && compoundPartIndex >= 0
+                && compoundPartIndex == compoundPartTotal - 1;
+        if (!taskFullyDone) {
+            return;
+        }
+
         sendTaskDoneMessage(player);
 
         if (maxContextTokens <= 0) {
@@ -435,7 +521,6 @@ public class Agent {
                             AGENT_DISPLAY_NAME
                     ).withStyle(ChatFormatting.DARK_GRAY)
             );
-            maybeEnqueueWikiFollowups(player, reply, replyForCommit, wikiFollowupDepth);
             return;
         }
 
@@ -457,7 +542,6 @@ public class Agent {
                             remainingTokens
                     ).withStyle(ChatFormatting.GOLD)
             );
-            maybeEnqueueWikiFollowups(player, reply, replyForCommit, wikiFollowupDepth);
             return;
         }
         sendToMainThread(
@@ -473,83 +557,13 @@ public class Agent {
                         remainingTokens
                 ).withStyle(ChatFormatting.DARK_GRAY)
         );
-        maybeEnqueueWikiFollowups(player, reply, replyForCommit, wikiFollowupDepth);
     }
 
     private static void sendTaskDoneMessage(ServerPlayer player) {
         sendToMainThread(
                 player,
-                i18n("command.modid.agent.chat.task.done", "[%s] 任务完成", AGENT_DISPLAY_NAME).withStyle(ChatFormatting.GREEN)
+                i18n("command.modid.agent.chat.task.done", "[%s] 对话完成", AGENT_DISPLAY_NAME).withStyle(ChatFormatting.GREEN)
         );
-    }
-
-    private static void maybeEnqueueWikiFollowups(ServerPlayer player, String rawReply, String replyForCommit, int wikiFollowupDepth) {
-        if (wikiFollowupDepth >= MAX_WIKI_SEARCH_CHAIN_DEPTH) {
-            return;
-        }
-        if (config.apiKey().isBlank()) {
-            return;
-        }
-        List<String> queries = extractWikiSearchQueries(rawReply);
-        if (queries.isEmpty()) {
-            return;
-        }
-        String prior = truncateForPrompt(replyForCommit, 2400);
-        for (String q : queries) {
-            enqueueWikiFollowupFromAssistantReply(player, prior, q, wikiFollowupDepth);
-        }
-    }
-
-    private static void enqueueWikiFollowupFromAssistantReply(ServerPlayer player, String priorAssistantReply, String wikiQuery, int wikiFollowupDepth) {
-        AgentConfig currentConfig = config;
-        String runtimeSystemPrompt = buildRuntimeSystemPrompt(player);
-        enqueuePlayerAiTask(player, () -> {
-            sendToMainThread(
-                    player,
-                    i18n("command.modid.agent.wiki.followup", "[%s] 按模型请求检索 Minecraft Wiki…", AGENT_DISPLAY_NAME).withStyle(ChatFormatting.DARK_GRAY)
-            );
-            String excerpt = MinecraftWiki.fetchExcerptContext(wikiQuery, 4, 8000);
-            if (excerpt == null || excerpt.isBlank()) {
-                sendToMainThread(
-                        player,
-                        i18n("command.modid.agent.wiki.empty", "[%s] 未在 Wiki 找到可用摘要，请换关键词重试。", AGENT_DISPLAY_NAME).withStyle(ChatFormatting.RED)
-                );
-                return;
-            }
-            String apiPrompt = "[Minecraft Wiki supplement · source https://minecraft.wiki/]\n"
-                    + "The assistant already replied to the user. Use the wiki excerpts below to write a concise supplement "
-                    + "in the same language as the conversation. If excerpts are insufficient, say so.\n\n"
-                    + "Search query: " + wikiQuery + "\n\n"
-                    + "Previous assistant reply (no machine directives):\n"
-                    + priorAssistantReply + "\n\n---\nWiki excerpts:\n"
-                    + excerpt;
-            ConversationPrepareResult prepareResult = prepareConversation(player, apiPrompt, currentConfig.maxContextTokens(), runtimeSystemPrompt);
-            if (!prepareResult.allowed()) {
-                sendToMainThread(player, prepareResult.blockMessage().withStyle(ChatFormatting.YELLOW));
-                return;
-            }
-            ApiResult apiResult = callOpenAICompatibleApi(player, prepareResult.requestMessages(), currentConfig);
-            String followPrompt = "[Wiki] " + wikiQuery;
-            handleAiReply(player, followPrompt, apiResult, prepareResult.version(), currentConfig.maxContextTokens(), prepareResult.systemTokens(), wikiFollowupDepth + 1);
-        });
-    }
-
-    private static List<String> extractWikiSearchQueries(String reply) {
-        if (reply == null || reply.isBlank()) {
-            return List.of();
-        }
-        List<String> out = new ArrayList<>();
-        for (String rawLine : reply.replace("\r\n", "\n").split("\n")) {
-            String line = rawLine.trim();
-            Matcher m = WIKI_SEARCH_DIRECTIVE_LINE_PATTERN.matcher(line);
-            if (m.matches()) {
-                String q = m.group(1).trim();
-                if (!q.isEmpty() && out.size() < MAX_WIKI_SEARCH_DIRECTIVES_PER_REPLY) {
-                    out.add(q);
-                }
-            }
-        }
-        return out;
     }
 
     private static String stripWikiSearchDirectives(String reply) {
@@ -570,14 +584,14 @@ public class Agent {
         return sb.toString().trim();
     }
 
-    private static String truncateForPrompt(String s, int maxChars) {
+    private static String truncateForWikiQueryDisplay(String s) {
         if (s == null || s.isEmpty()) {
             return "";
         }
-        if (s.length() <= maxChars) {
+        if (s.length() <= MAX_WIKI_QUERY_DISPLAY_CHARS) {
             return s;
         }
-        return s.substring(0, maxChars) + "...(truncated)";
+        return s.substring(0, MAX_WIKI_QUERY_DISPLAY_CHARS - 1) + "…";
     }
 
     private static ApiResult callOpenAICompatibleApi(ServerPlayer player, JsonArray requestMessages, AgentConfig currentConfig) {
