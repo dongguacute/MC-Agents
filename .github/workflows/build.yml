@@ -4,11 +4,18 @@
 # against bad commits.
 
 name: build
-on: [release]
+on:
+  release:
+    types: [published]
 
 jobs:
   build:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      # 与 src/main/resources/fabric.mod.json 中 id 一致
+      MOD_ID: mc-agents
     steps:
       - name: checkout repository
         uses: actions/checkout@v6
@@ -40,7 +47,7 @@ jobs:
             [[ "$low" == "$MIN_MC" ]] || continue
             latest="$(awk -F'+' -v mc="$mc" 'NF == 2 && $2 == mc' /tmp/fabric-api-all.txt | sort -V | tail -1)"
             [[ -n "$latest" ]] || continue
-            echo "Building mc-agent-${mc}.jar (Fabric API ${latest})"
+            echo "Building ${MOD_ID}-${mc}.jar (Fabric API ${latest})"
             ./gradlew clean build --no-daemon -Pminecraft_version="$mc" -Pfabric_api_version="$latest"
             JAR=""
             for f in build/libs/*.jar; do
@@ -55,11 +62,21 @@ jobs:
               ls -la build/libs/ || true
               exit 1
             fi
-            cp "$JAR" "dist/mc-agent-${mc}.jar"
+            cp "$JAR" "dist/${MOD_ID}-${mc}.jar"
           done
           ls -la dist/
+      - name: upload jars to current GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.release.tag_name }}"
+          shopt -s nullglob
+          files=(dist/"${MOD_ID}"-*.jar)
+          [[ ${#files[@]} -gt 0 ]] || { echo "No dist/${MOD_ID}-*.jar to upload" >&2; exit 1; }
+          gh release upload "$tag" "${files[@]}" --clobber
       - name: capture build artifacts
         uses: actions/upload-artifact@v7
         with:
           name: Artifacts
-          path: dist/mc-agent-*.jar
+          path: dist/${{ env.MOD_ID }}-*.jar
