@@ -70,6 +70,8 @@ public class Recordbot {
                                 .then(Commands.literal("reload")
                                         .requires(source -> source.hasPermission(2))
                                         .executes(Recordbot::handleReloadCommand))
+                                .then(Commands.argument("prompt", StringArgumentType.greedyString())
+                                        .executes(Recordbot::handleAskCommand))
                 )
         );
     }

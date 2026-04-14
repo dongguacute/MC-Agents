@@ -58,6 +58,9 @@ public class Startbot {
             matchedAny = true;
             String action = matcher.group(1).toLowerCase();
             String botNameOrTag = matcher.group(2) != null ? matcher.group(2) : matcher.group(3);
+            if (botNameOrTag != null) {
+                botNameOrTag = botNameOrTag.trim();
+            }
             int result = handleControl(source, action, botNameOrTag);
             if (result == 1) {
                 successAny = true;
@@ -150,6 +153,7 @@ public class Startbot {
             source.sendFailure(i18n("command.modid.agent.control.target.empty", "请输入 bot 名称或已记录的 tag"));
             return null;
         }
+        String normalizedInput = input.trim();
 
         List<String> matchedBots = new ArrayList<>();
         Path recordFile;
@@ -162,9 +166,9 @@ public class Startbot {
                     continue;
                 }
                 JsonObject record = element.getAsJsonObject();
-                String tag = record.has("tag") ? record.get("tag").getAsString() : "";
-                String botName = record.has("bot_name") ? record.get("bot_name").getAsString() : "";
-                if (!input.equals(tag)) {
+                String tag = record.has("tag") ? record.get("tag").getAsString().trim() : "";
+                String botName = record.has("bot_name") ? record.get("bot_name").getAsString().trim() : "";
+                if (!normalizedInput.equals(tag)) {
                     continue;
                 }
                 if (!isValidBotName(botName)) {
@@ -184,9 +188,9 @@ public class Startbot {
             return matchedBots;
         }
 
-        if (isValidBotName(input)) {
+        if (isValidBotName(normalizedInput)) {
             List<String> single = new ArrayList<>();
-            single.add(input);
+            single.add(normalizedInput);
             return single;
         }
 
