@@ -352,8 +352,9 @@ public class Recordbot {
         return 1;
     }
 
+    @SuppressWarnings("unused")
     private static Component i18n(String key, String fallback, Object... args) {
-        return Component.translatableWithFallback(key, fallback, args);
+        return Component.translatable(key, args);
     }
 
     private static Path getDataFile(MinecraftServer server) throws IOException {

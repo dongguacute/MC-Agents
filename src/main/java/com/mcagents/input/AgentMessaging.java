@@ -17,8 +17,9 @@ final class AgentMessaging {
         server.execute(() -> player.sendSystemMessage(msg));
     }
 
+    @SuppressWarnings("unused")
     static MutableComponent i18n(String key, String fallback, Object... args) {
-        return Component.translatableWithFallback(key, fallback, args);
+        return Component.translatable(key, args);
     }
 
     private AgentMessaging() {

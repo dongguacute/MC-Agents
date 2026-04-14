@@ -21,10 +21,45 @@ jobs:
           distribution: 'microsoft'
       - name: make gradle wrapper executable
         run: chmod +x ./gradlew
-      - name: build
-        run: ./gradlew build
+      - name: build all compatible Minecraft releases
+        env:
+          # 须与 fabric.mod.json 中 depends.minecraft 一致：>=1.19.4 <1.23（此处构建 1.19.4–1.21.x，与 Fabric API 发布一致）
+          MIN_MC: '1.19.4'
+          FABRIC_META_URL: 'https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/maven-metadata.xml'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          curl -fsSL "$FABRIC_META_URL" -o /tmp/fabric-api-maven-metadata.xml
+          # 从 Maven 元数据列出 fabric-api 正式版坐标（1.19.x / 1.20.x / 1.21.x）；不含快照
+          grep -oE '[0-9]+\.[0-9.]+\+1\.(19|20|21)\.[0-9]+' /tmp/fabric-api-maven-metadata.xml | sort -uV > /tmp/fabric-api-all.txt
+          [[ -s /tmp/fabric-api-all.txt ]] || { echo "No fabric-api versions parsed from metadata" >&2; exit 1; }
+          # 每个游戏版本只取当前仍发布在元数据中的、该版本号下最新的 Fabric API
+          mapfile -t MC_VERSIONS < <(sed 's/.*+//' /tmp/fabric-api-all.txt | sort -uV)
+          for mc in "${MC_VERSIONS[@]}"; do
+            low="$(printf '%s\n' "$MIN_MC" "$mc" | sort -V | head -1)"
+            [[ "$low" == "$MIN_MC" ]] || continue
+            latest="$(awk -F'+' -v mc="$mc" 'NF == 2 && $2 == mc' /tmp/fabric-api-all.txt | sort -V | tail -1)"
+            [[ -n "$latest" ]] || continue
+            echo "Building mc-agent-${mc}.jar (Fabric API ${latest})"
+            ./gradlew clean build --no-daemon -Pminecraft_version="$mc" -Pfabric_api_version="$latest"
+            JAR=""
+            for f in build/libs/*.jar; do
+              [[ -f "$f" ]] || continue
+              case "$f" in
+                *-sources.jar|*-dev.jar|*-javadoc.jar) continue ;;
+                *) JAR="$f"; break ;;
+              esac
+            done
+            if [[ -z "$JAR" ]]; then
+              echo "No main jar found in build/libs" >&2
+              ls -la build/libs/ || true
+              exit 1
+            fi
+            cp "$JAR" "dist/mc-agent-${mc}.jar"
+          done
+          ls -la dist/
       - name: capture build artifacts
         uses: actions/upload-artifact@v7
         with:
           name: Artifacts
-          path: build/libs/
+          path: dist/mc-agent-*.jar

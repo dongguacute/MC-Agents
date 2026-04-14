@@ -219,8 +219,9 @@ public class Startbot {
         }
     }
 
+    @SuppressWarnings("unused")
     private static MutableComponent i18n(String key, String fallback, Object... args) {
-        return Component.translatableWithFallback(key, fallback, args);
+        return Component.translatable(key, args);
     }
 
     private static CommandSourceStack createAgentSourceFromPlayer(ServerPlayer player) {
