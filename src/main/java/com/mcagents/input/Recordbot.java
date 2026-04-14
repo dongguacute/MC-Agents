@@ -2,6 +2,7 @@ package com.mcagents.input;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
+import com.mcagents.util.CommandSourceFeedback;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
@@ -96,8 +97,9 @@ public class Recordbot {
 
             writeRecords(dataFile, records);
 
-            context.getSource().sendSuccess(
-                    () -> i18n("command.modid.agent.record.success", FB_RECORD_SUCCESS, botName, tag),
+            CommandSourceFeedback.sendSuccess(
+                    context.getSource(),
+                    i18n("command.modid.agent.record.success", FB_RECORD_SUCCESS, botName, tag),
                     false
             );
             return 1;
@@ -144,8 +146,9 @@ public class Recordbot {
 
             writeRecords(dataFile, updatedRecords);
             int finalRemovedCount = removedCount;
-            context.getSource().sendSuccess(
-                    () -> i18n("command.modid.agent.record.remove.success", FB_REMOVE_SUCCESS, finalRemovedCount, botName, tag),
+            CommandSourceFeedback.sendSuccess(
+                    context.getSource(),
+                    i18n("command.modid.agent.record.remove.success", FB_REMOVE_SUCCESS, finalRemovedCount, botName, tag),
                     false
             );
             return 1;
@@ -190,8 +193,9 @@ public class Recordbot {
 
             writeRecords(dataFile, updatedRecords);
             int finalRemovedCount = removedCount;
-            context.getSource().sendSuccess(
-                    () -> i18n("command.modid.agent.record.remove.by_name.success", FB_REMOVE_BY_NAME_SUCCESS, finalRemovedCount, botName),
+            CommandSourceFeedback.sendSuccess(
+                    context.getSource(),
+                    i18n("command.modid.agent.record.remove.by_name.success", FB_REMOVE_BY_NAME_SUCCESS, finalRemovedCount, botName),
                     false
             );
             return 1;
@@ -210,8 +214,9 @@ public class Recordbot {
             int removedCount = records.size();
 
             if (removedCount == 0) {
-                context.getSource().sendSuccess(
-                        () -> i18n("command.modid.agent.record.remove.all.empty", FB_REMOVE_ALL_EMPTY),
+                CommandSourceFeedback.sendSuccess(
+                        context.getSource(),
+                        i18n("command.modid.agent.record.remove.all.empty", FB_REMOVE_ALL_EMPTY),
                         false
                 );
                 return 1;
@@ -219,8 +224,9 @@ public class Recordbot {
 
             writeRecords(dataFile, new JsonArray());
             int finalRemovedCount = removedCount;
-            context.getSource().sendSuccess(
-                    () -> i18n("command.modid.agent.record.remove.all.success", FB_REMOVE_ALL_SUCCESS, finalRemovedCount),
+            CommandSourceFeedback.sendSuccess(
+                    context.getSource(),
+                    i18n("command.modid.agent.record.remove.all.success", FB_REMOVE_ALL_SUCCESS, finalRemovedCount),
                     false
             );
             return 1;
@@ -237,15 +243,17 @@ public class Recordbot {
             JsonArray records = readRecords(getDataFile(context.getSource().getServer()));
 
             if (records.isEmpty()) {
-                context.getSource().sendSuccess(
-                        () -> i18n("command.modid.agent.botlist.empty", FB_BOTLIST_EMPTY),
+                CommandSourceFeedback.sendSuccess(
+                        context.getSource(),
+                        i18n("command.modid.agent.botlist.empty", FB_BOTLIST_EMPTY),
                         false
                 );
                 return 1;
             }
 
-            context.getSource().sendSuccess(
-                    () -> i18n("command.modid.agent.botlist.header", FB_BOTLIST_HEADER),
+            CommandSourceFeedback.sendSuccess(
+                    context.getSource(),
+                    i18n("command.modid.agent.botlist.header", FB_BOTLIST_HEADER),
                     false
             );
 
@@ -258,8 +266,9 @@ public class Recordbot {
                 String botName = record.has("bot_name") ? record.get("bot_name").getAsString() : "unknown";
                 String tag = record.has("tag") ? record.get("tag").getAsString() : "unknown";
 
-                context.getSource().sendSuccess(
-                        () -> i18n("command.modid.agent.botlist.item", FB_BOTLIST_ITEM, botName, tag),
+                CommandSourceFeedback.sendSuccess(
+                        context.getSource(),
+                        i18n("command.modid.agent.botlist.item", FB_BOTLIST_ITEM, botName, tag),
                         false
                 );
             }
@@ -301,8 +310,9 @@ public class Recordbot {
     private static int handleReloadCommand(CommandContext<CommandSourceStack> context) {
         try {
             Agent.reloadConfig(context.getSource().getServer());
-            context.getSource().sendSuccess(
-                    () -> i18n("command.modid.agent.reload.success", FB_RELOAD_SUCCESS),
+            CommandSourceFeedback.sendSuccess(
+                    context.getSource(),
+                    i18n("command.modid.agent.reload.success", FB_RELOAD_SUCCESS),
                     true
             );
             return 1;
@@ -345,8 +355,9 @@ public class Recordbot {
             return 0;
         }
         Agent.resetConversation(player);
-        context.getSource().sendSuccess(
-                () -> i18n("command.modid.agent.chat.new.success", FB_NEW_SUCCESS),
+        CommandSourceFeedback.sendSuccess(
+                context.getSource(),
+                i18n("command.modid.agent.chat.new.success", FB_NEW_SUCCESS),
                 false
         );
         return 1;

@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mcagents.input.Agent;
+import com.mcagents.util.CommandSourceFeedback;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
@@ -137,7 +138,7 @@ public class Startbot {
         markRecentDirective(source, action, conflictCheck.executableBots());
 
         int finalSuccessCount = successCount;
-        source.sendSuccess(() -> i18n("command.modid.agent.control.batch.result", "批量执行完成：成功 %s 个，失败 %s 个", finalSuccessCount, failedBots.size()), true);
+        CommandSourceFeedback.sendSuccess(source, i18n("command.modid.agent.control.batch.result", "批量执行完成：成功 %s 个，失败 %s 个", finalSuccessCount, failedBots.size()), true);
         if (!failedBots.isEmpty()) {
             source.sendFailure(i18n("command.modid.agent.control.batch.failed_bots", "失败 bot: %s", String.join(", ", failedBots)));
         }
@@ -160,7 +161,7 @@ public class Startbot {
         try {
             recordFile = getRecordFile(source.getServer());
             JsonArray records = readRecords(recordFile);
-            source.sendSuccess(() -> i18n("command.modid.agent.control.records.loaded", "已读取存储库: %s，记录数 %s", recordFile.toAbsolutePath().toString(), records.size()), false);
+            CommandSourceFeedback.sendSuccess(source, i18n("command.modid.agent.control.records.loaded", "已读取存储库: %s，记录数 %s", recordFile.toAbsolutePath().toString(), records.size()), false);
             for (JsonElement element : records) {
                 if (!element.isJsonObject()) {
                     continue;
@@ -184,7 +185,7 @@ public class Startbot {
         }
 
         if (!matchedBots.isEmpty()) {
-            source.sendSuccess(() -> i18n("command.modid.agent.control.tag.matched", "tag 命中 bot: %s", String.join(", ", matchedBots)), false);
+            CommandSourceFeedback.sendSuccess(source, i18n("command.modid.agent.control.tag.matched", "tag 命中 bot: %s", String.join(", ", matchedBots)), false);
             return matchedBots;
         }
 
