@@ -40,11 +40,12 @@ final class AgentConstants {
     static final Pattern PROMPT_LEAK_PATTERN = Pattern.compile(
             "(?is)(你是\\s*minecraft\\s*服务器助手|当且仅当用户明确要求控制假人上下线时|\\[control_bot\\]|system\\s*prompt|developer\\s*message|提示词|instruction)"
     );
-    /** 单条 ask 中拆成多个子任务的连接词/分隔符（多行、分号、加号等） */
+    /** 单条 ask 中拆成多个子任务的连接词/分隔符（多行、分号、顿号/逗号、加号等） */
     static final Pattern COMPOUND_ASK_SPLIT = Pattern.compile(
-            "\\s*(?:然后|接着|其次|另外|还有|并且|以及|顺带|顺便|之后|；|;)\\s*|\\s*\\+\\s*"
+            "\\s*(?:然后|接着|其次|另外|还有|并且|以及|顺带|顺便|之后|；|;|、|，)\\s*|\\s*\\+\\s*|\\s*,\\s*"
     );
-    static final int COMPOUND_ASK_MIN_SEGMENT_LEN = 4;
+    /** 过短片段视为噪声丢弃；设为 2 以便「短句 + 换行」仍能拆成多任务 */
+    static final int COMPOUND_ASK_MIN_SEGMENT_LEN = 2;
 
     private AgentConstants() {
     }
