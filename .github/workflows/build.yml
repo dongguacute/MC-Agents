@@ -155,6 +155,7 @@ jobs:
             echo "::notice::MODRINTH_TOKEN is not set; skipping Modrinth upload."
             exit 0
           fi
+          UA="${GITHUB_REPOSITORY}/${GITHUB_RUN_ID} (github.com/${GITHUB_REPOSITORY})"
           PROJECT_ID="${MODRINTH_PROJECT_ID:-$MOD_ID}"
           TAG="${RELEASE_TAG}"
           VERSION_NUMBER="${TAG#v}"
@@ -173,8 +174,31 @@ jobs:
             game_versions+=("$mc")
           done
           mapfile -t game_versions < <(printf '%s\n' "${game_versions[@]}" | sort -uV)
-          game_versions_json=$(printf '%s\n' "${game_versions[@]}" | jq -R . | jq -s .)
+          curl -fsSL -H "User-Agent: ${UA}" "https://api.modrinth.com/v2/tag/game_version" -o /tmp/modrinth-game-tags.json
+          valid_set=$(jq -r '.[].version' /tmp/modrinth-game-tags.json | sort -u)
+          filtered=()
+          for v in "${game_versions[@]}"; do
+            if echo "${valid_set}" | grep -qxF "${v}"; then
+              filtered+=("${v}")
+            else
+              echo "::warning::Minecraft version '${v}' is not a Modrinth game tag; skipping it."
+            fi
+          done
+          if [[ ${#filtered[@]} -eq 0 ]]; then
+            echo "No game versions left after matching Modrinth /v2/tag/game_version" >&2
+            exit 1
+          fi
+          game_versions_json=$(printf '%s\n' "${filtered[@]}" | jq -R . | jq -s .)
           CHANGELOG="$(gh release view "$TAG" --json body -q .body -R "${GITHUB_REPOSITORY}" 2>/dev/null || true)"
+          proj_code=$(curl -sS -o /tmp/modrinth-project.json -w "%{http_code}" \
+            -H "User-Agent: ${UA}" \
+            -H "Authorization: ${MODRINTH_TOKEN}" \
+            "https://api.modrinth.com/v2/project/${PROJECT_ID}")
+          if [[ "${proj_code}" != "200" ]]; then
+            echo "Modrinth project '${PROJECT_ID}' not found (HTTP ${proj_code}). Set repository variable MODRINTH_PROJECT_ID to your project slug or ID." >&2
+            cat /tmp/modrinth-project.json >&2 || true
+            exit 1
+          fi
           parts=()
           file_args=()
           i=0
@@ -202,15 +226,21 @@ jobs:
               version_type: "release",
               loaders: ["fabric"],
               featured: false,
-              status: "listed",
               project_id: $project_id,
               file_parts: $file_parts,
               primary_file: $primary_file
             }' > /tmp/modrinth-version.json
-          echo "Uploading version ${VERSION_NUMBER} to Modrinth project ${PROJECT_ID} (game versions: $(IFS=,; echo "${game_versions[*]}"))"
-          curl -fsSL -X POST "https://api.modrinth.com/v2/version" \
+          echo "Uploading version ${VERSION_NUMBER} to Modrinth project ${PROJECT_ID} (game versions: $(IFS=,; echo "${filtered[*]}"))"
+          # multipart 中 data 必须在所有文件字段之前（Labrinth 要求）
+          http_code=$(curl -sS -w "%{http_code}" -o /tmp/modrinth-upload.json \
+            -X POST "https://api.modrinth.com/v2/version" \
             -H "Authorization: ${MODRINTH_TOKEN}" \
-            -H "User-Agent: ${GITHUB_REPOSITORY}/${GITHUB_RUN_ID} (github.com/${GITHUB_REPOSITORY})" \
+            -H "User-Agent: ${UA}" \
             -F "data=@/tmp/modrinth-version.json;type=application/json" \
-            "${file_args[@]}"
+            "${file_args[@]}")
+          if [[ "${http_code}" != "200" ]]; then
+            echo "Modrinth API returned HTTP ${http_code}" >&2
+            cat /tmp/modrinth-upload.json >&2
+            exit 1
+          fi
           echo "Modrinth upload finished."
